@@ -81,6 +81,7 @@ namespace Eitan.SherpaONNXUnity.Editor
                 if (new FileInfo(archivePath).Length != manifest.archiveSize ||
                     !string.Equals(ComputeSha256(archivePath), manifest.archiveSha256, StringComparison.OrdinalIgnoreCase))
                 {
+                    File.Delete(archivePath);
                     throw new InvalidDataException("The downloaded archive failed its pinned size/SHA-256 verification.");
                 }
 
