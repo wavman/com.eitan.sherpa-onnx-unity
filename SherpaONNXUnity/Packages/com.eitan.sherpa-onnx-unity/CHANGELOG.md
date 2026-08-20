@@ -5,6 +5,19 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http.keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.1.4-exp.1] - 2026-08-20
+
+### Added
+- Added CPU/CUDA execution-provider selection for Speech Recognition components.
+- Added optional one-shot silent warm-up with load and warm-up timing diagnostics.
+- Added strict Windows CUDA prerequisite and loaded-provider checks; CUDA failures are reported instead of selecting CPU automatically.
+- Added a manually triggered, SHA-256-pinned installer for the official sherpa-onnx v1.13.6 / ONNX Runtime 1.27.1 CUDA 13.x runtime.
+
+### Changed
+- Windows CUDA runtime files are installed into the consuming project's `Assets/Plugins` directory and are no longer bundled in this package.
+- Windows desktop speech recognition continues to resolve the FP32 model files; int8 selection remains mobile-only.
+- Package metadata now identifies the Apache-2.0 package license and the `wavman` fork repository.
+
 ## [0.1.3-exp.4] - 2026-05-07
 
 ### Added

@@ -21,6 +21,8 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             public float Rule2MinTrailingSilence { get; set; } = 1.2f;
             public float Rule3MinUtteranceLength { get; set; } = 30f;
             public string Language { get; set; }
+            public SherpaONNXExecutionProvider ExecutionProvider { get; set; } = SherpaONNXExecutionProvider.Cpu;
+            public bool WarmUpOnInitialization { get; set; } = true;
         }
 
         private OnlineRecognizer _onlineRecognizer;
@@ -38,6 +40,11 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
         private readonly int _maxPendingTranscriptions;
         private readonly bool _dropIfBusy;
         private int _pendingTranscriptions;
+
+        public SherpaONNXExecutionProvider ExecutionProvider => _options.ExecutionProvider;
+        public TimeSpan ModelLoadDuration { get; private set; }
+        public TimeSpan WarmUpDuration { get; private set; }
+        public bool WasWarmedUp { get; private set; }
 
         private readonly struct RecognizerConfigContext
         {
@@ -136,6 +143,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
         private async Task<bool> LoadOnlineModelAsync(SherpaONNXModelMetadata metadata, int sampleRate, bool isMobilePlatform, SherpaONNXFeedbackReporter reporter, CancellationToken ct)
         {
+            EnsureExecutionProviderAvailable();
             TryReportAndroid32BitRuntimeRisk(metadata, reporter, "SpeechRecognition");
             var context = BuildConfigContext(metadata, sampleRate, isMobilePlatform, reporter);
             var config = CreateOnlineRecognizerConfig(metadata, sampleRate, context);
@@ -148,19 +156,35 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
                 if (IsDisposed) { return Task.FromResult(false); }
 
+                var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                 _onlineRecognizer = new OnlineRecognizer(config);
                 var initialized = IsSuccessInitializad(_onlineRecognizer);
                 if (initialized)
                 {
                     _onlineStream = _onlineRecognizer.CreateStream();
+                    if (_options.WarmUpOnInitialization)
+                    {
+                        WarmUpOnlineRecognizer(sampleRate, linkedCts.Token);
+                    }
                 }
-                reporter?.Report(new LoadFeedback(metadata, message: $"Loaded online model: {metadata.modelId}"));
+                ModelLoadDuration = loadTimer.Elapsed;
+                if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda && initialized &&
+                    !SherpaCudaRuntimeDiagnostics.CheckLoadedCudaProvider(out var cudaMessage))
+                {
+                    _onlineStream?.Dispose();
+                    _onlineRecognizer?.Dispose();
+                    _onlineStream = null;
+                    _onlineRecognizer = null;
+                    throw new InvalidOperationException(cudaMessage);
+                }
+                reporter?.Report(new LoadFeedback(metadata, message: $"Loaded online model: {metadata.modelId} ({ExecutionProvider}, load={ModelLoadDuration.TotalMilliseconds:0} ms, warmup={WarmUpDuration.TotalMilliseconds:0} ms)"));
                 return Task.FromResult(initialized);
             });
         }
 
         private async Task<bool> LoadOfflineModelAsync(SherpaONNXModelMetadata metadata, int sampleRate, bool isMobilePlatform, SherpaONNXFeedbackReporter reporter, CancellationToken ct)
         {
+            EnsureExecutionProviderAvailable();
             TryReportAndroid32BitRuntimeRisk(metadata, reporter, "SpeechRecognition");
             var context = BuildConfigContext(metadata, sampleRate, isMobilePlatform, reporter);
             var config = CreateOfflineRecognizerConfig(metadata, sampleRate, context);
@@ -175,8 +199,23 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
                  try
                  {
+                     var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                      _offlineRecognizer = new OfflineRecognizer(config);
                      var initialized = IsSuccessInitializad(_offlineRecognizer);
+
+                     if (initialized && _options.WarmUpOnInitialization)
+                     {
+                         WarmUpOfflineRecognizer(sampleRate, linkedCts.Token);
+                     }
+                     ModelLoadDuration = loadTimer.Elapsed;
+
+                     if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda && initialized &&
+                         !SherpaCudaRuntimeDiagnostics.CheckLoadedCudaProvider(out var cudaMessage))
+                     {
+                         _offlineRecognizer.Dispose();
+                         _offlineRecognizer = null;
+                         throw new InvalidOperationException(cudaMessage);
+                     }
 
                      if (initialized)
                      {
@@ -193,11 +232,15 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                  {
                      throw;
                  }
-                 catch (Exception ex)
-                 {
-                     reporter?.Report(new FailedFeedback(metadata, message: ex.Message, exception: ex));
-                     return Task.FromResult(false);
-                 }
+                catch (Exception ex)
+                {
+                    reporter?.Report(new FailedFeedback(metadata, message: ex.Message, exception: ex));
+                    if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda)
+                    {
+                        throw;
+                    }
+                    return Task.FromResult(false);
+                }
              });
         }
 
@@ -209,6 +252,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             config.ModelConfig.Tokens = context.TokensPath;
             config.ModelConfig.NumThreads = context.ThreadCount;
             config.ModelConfig.Debug = 0;
+            config.ModelConfig.Provider = ToNativeProvider(ExecutionProvider);
             config.DecodingMethod = "greedy_search";
             config.MaxActivePaths = 4;
             config.EnableEndpoint = 1;
@@ -305,6 +349,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             config.FeatConfig.FeatureDim = 80;
             config.ModelConfig.Tokens = context.TokensPath;
             config.ModelConfig.NumThreads = context.ThreadCount;
+            config.ModelConfig.Provider = ToNativeProvider(ExecutionProvider);
             config.ModelConfig.ModelType = SherpaUtils.Model.GetOfflineModelTypeString(_modelType, metadata);
             config.DecodingMethod = "greedy_search";
             config.MaxActivePaths = 4;
@@ -1117,6 +1162,58 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             }
 
             return new RecognizerConfigContext(threadCount, tokensPath, int8QuantKeyword, fallbackReporter);
+        }
+
+        private static string ToNativeProvider(SherpaONNXExecutionProvider provider)
+        {
+            return provider == SherpaONNXExecutionProvider.Cuda ? "cuda" : "cpu";
+        }
+
+        private void EnsureExecutionProviderAvailable()
+        {
+            if (ExecutionProvider != SherpaONNXExecutionProvider.Cuda)
+            {
+                return;
+            }
+
+            if (!SherpaCudaRuntimeDiagnostics.CheckSystemDependencies(out var message))
+            {
+                throw new InvalidOperationException(message);
+            }
+        }
+
+        private void WarmUpOnlineRecognizer(int sampleRate, CancellationToken cancellationToken)
+        {
+            var warmupTimer = System.Diagnostics.Stopwatch.StartNew();
+            using (var warmupStream = _onlineRecognizer.CreateStream())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                warmupStream.AcceptWaveform(sampleRate, new float[Math.Max(sampleRate, 16000)]);
+                warmupStream.InputFinished();
+                while (_onlineRecognizer.IsReady(warmupStream))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _onlineRecognizer.Decode(warmupStream);
+                }
+            }
+
+            WarmUpDuration = warmupTimer.Elapsed;
+            WasWarmedUp = true;
+        }
+
+        private void WarmUpOfflineRecognizer(int sampleRate, CancellationToken cancellationToken)
+        {
+            var warmupTimer = System.Diagnostics.Stopwatch.StartNew();
+            using (var warmupStream = _offlineRecognizer.CreateStream())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                warmupStream.AcceptWaveform(sampleRate, new float[Math.Max(sampleRate, 16000)]);
+                _offlineRecognizer.Decode(warmupStream);
+                _ = warmupStream.Result;
+            }
+
+            WarmUpDuration = warmupTimer.Elapsed;
+            WasWarmedUp = true;
         }
 
         private void ApplyParaformerFinalState(bool isFinal)
