@@ -1,0 +1,13 @@
+{
+  "sherpaVersion": "1.13.6",
+  "onnxRuntimeVersion": "1.27.1",
+  "archiveUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.6/sherpa-onnx-v1.13.6-cuda-13.x-cudnn-9.x-onnxruntime1.27.1-win-x64-cuda.tar.bz2",
+  "archiveSize": 428595212,
+  "archiveSha256": "fe4cd35e0639b29eb41e72cfb4460ca9588f1fdd3cf680527b6c2395f2c84aa7",
+  "files": [
+    "onnxruntime.dll",
+    "onnxruntime_providers_cuda.dll",
+    "onnxruntime_providers_shared.dll",
+    "sherpa-onnx-c-api.dll"
+  ]
+}

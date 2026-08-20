@@ -107,6 +107,47 @@ namespace Eitan.SherpaONNXUnity.Runtime.Native
           }
         }
 
+        public static String OnnxRuntimeVersion
+        {
+          get
+          {
+            IntPtr p;
+            try
+            {
+                p = SherpaOnnxGetOnnxruntimeVersionStr();
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // Older non-Windows native packages may not expose this diagnostic yet.
+                return String.Empty;
+            }
+            if (p == IntPtr.Zero)
+            {
+                return String.Empty;
+            }
+
+            int length = 0;
+            unsafe
+            {
+                byte* b = (byte*)p;
+                while (*b != 0)
+                {
+                    ++b;
+                    length += 1;
+                }
+            }
+
+            if (length == 0)
+            {
+                return String.Empty;
+            }
+
+            byte[] stringBuffer = new byte[length];
+            Marshal.Copy(p, stringBuffer, 0, length);
+            return Encoding.UTF8.GetString(stringBuffer);
+          }
+        }
+
 
         [DllImport(Dll.Filename)]
         private static extern IntPtr SherpaOnnxGetVersionStr();
@@ -116,5 +157,8 @@ namespace Eitan.SherpaONNXUnity.Runtime.Native
 
         [DllImport(Dll.Filename)]
         private static extern IntPtr SherpaOnnxGetGitDate();
+
+        [DllImport(Dll.Filename, EntryPoint = "SherpaOnnxGetOnnxruntimeVersionStr")]
+        private static extern IntPtr SherpaOnnxGetOnnxruntimeVersionStr();
     }
 }

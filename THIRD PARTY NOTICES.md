@@ -2,6 +2,10 @@
 
 This package contains third-party software components governed by their respective licenses. The following sections provide the required legal notices and license information.
 
+## CUDA runtime prerequisite
+
+The Windows CUDA provider installer downloads the following files from the official sherpa-onnx v1.13.6 release at user request: `onnxruntime.dll`, `onnxruntime_providers_cuda.dll`, `onnxruntime_providers_shared.dll`, and `sherpa-onnx-c-api.dll`. CUDA Toolkit, cuDNN, and the Microsoft Visual C++ runtime are system prerequisites and are intentionally not redistributed by this package. The installer records and verifies the release archive SHA-256 before extracting only those four files.
+
 ## sherpa-onnx
 
 This package uses the sherpa-onnx library for speech recognition and synthesis functionality.

@@ -52,6 +52,14 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
         [Header("Recognition Options")]
         [SerializeField]
+        [Tooltip("Execution provider used during recognizer initialization. Changing it requires reinitialization.")]
+        private SherpaONNXExecutionProvider executionProvider = SherpaONNXExecutionProvider.Cpu;
+
+        [SerializeField]
+        [Tooltip("Run one silent inference after model loading to warm native/GPU kernels.")]
+        private bool warmUpOnInitialization = true;
+
+        [SerializeField]
         [HideInInspector]
         [FormerlySerializedAs("language")]
         private string recognitionLanguage = string.Empty;
@@ -85,6 +93,18 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
         {
             get => recognitionLanguage;
             set => recognitionLanguage = value ?? string.Empty;
+        }
+
+        public SherpaONNXExecutionProvider ExecutionProvider
+        {
+            get => executionProvider;
+            set => executionProvider = value;
+        }
+
+        public bool WarmUpOnInitialization
+        {
+            get => warmUpOnInitialization;
+            set => warmUpOnInitialization = value;
         }
 
         private readonly Queue<AudioChunk> pendingChunks = new Queue<AudioChunk>();
@@ -124,7 +144,9 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
             var options = new SpeechRecognition.Options
             {
-                Language = recognitionLanguage
+                Language = recognitionLanguage,
+                ExecutionProvider = executionProvider,
+                WarmUpOnInitialization = warmUpOnInitialization
             };
             if (overrideEndpointRules)
             {
