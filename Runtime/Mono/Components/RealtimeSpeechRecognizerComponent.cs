@@ -107,6 +107,19 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
             set => warmUpOnInitialization = value;
         }
 
+        public TimeSpan ModelLoadDuration => Module?.ModelLoadDuration ?? TimeSpan.Zero;
+
+        public TimeSpan WarmUpDuration => Module?.WarmUpDuration ?? TimeSpan.Zero;
+
+        public bool WasWarmedUp => Module?.WasWarmedUp ?? false;
+
+        public int DroppedChunkCount => totalDroppedChunks;
+
+        public Task<bool> WarmUpAsync(CancellationToken cancellationToken = default)
+        {
+            return Module?.WarmUpAsync(cancellationToken) ?? Task.FromResult(false);
+        }
+
         private readonly Queue<AudioChunk> pendingChunks = new Queue<AudioChunk>();
         private readonly object queueLock = new object();
 
@@ -114,6 +127,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
         private bool drainingQueue;
         private string lastTranscript = string.Empty;
         private int droppedChunks;
+        private int totalDroppedChunks;
         private float lastDropLog;
 
         protected override void OnEnable()
@@ -121,6 +135,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
             base.OnEnable();
             streamingCancellation = new CancellationTokenSource();
             droppedChunks = 0;
+            totalDroppedChunks = 0;
             lastDropLog = 0f;
         }
 
@@ -243,6 +258,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
                 {
                     pendingChunks.Dequeue(); // Drop oldest to keep latency bounded.
                     droppedChunks++;
+                    totalDroppedChunks++;
                     dropped = true;
                 }
                 pendingChunks.Enqueue(chunk);

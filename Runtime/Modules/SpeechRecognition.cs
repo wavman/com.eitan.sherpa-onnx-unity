@@ -113,6 +113,39 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             _dropIfBusy = dropIfBusy;
         }
 
+        /// <summary>
+        /// Runs the same isolated silent inference used during initialization.
+        /// The active streaming stream is never used, so a manual warm-up cannot
+        /// inject silence into the next player utterance.
+        /// </summary>
+        public Task<bool> WarmUpAsync(CancellationToken cancellationToken = default)
+        {
+            if (!Initialized || IsDisposed)
+            {
+                return Task.FromResult(false);
+            }
+
+            return runner.RunAsync<bool>(ct =>
+            {
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, cancellationToken);
+                linkedCts.Token.ThrowIfCancellationRequested();
+
+                if (IsOnlineModel && _onlineRecognizer != null)
+                {
+                    WarmUpOnlineRecognizer(_modelSampleRate, linkedCts.Token);
+                    return Task.FromResult(true);
+                }
+
+                if (!IsOnlineModel && _offlineRecognizer != null)
+                {
+                    WarmUpOfflineRecognizer(_modelSampleRate, linkedCts.Token);
+                    return Task.FromResult(true);
+                }
+
+                return Task.FromResult(false);
+            }, cancellationToken: cancellationToken);
+        }
+
         protected override async Task<bool> Initialization(SherpaONNXModelMetadata metadata, int sampleRate, bool isMobilePlatform, SherpaONNXFeedbackReporter reporter, CancellationToken ct)
         {
             try
