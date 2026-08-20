@@ -172,7 +172,7 @@ namespace Eitan.SherpaONNXUnity.Editor
             {
                 var assetPath = PackageRelativeDirectory + "/" + dll;
                 AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
-                var importer = PluginImporter.GetAtPath(assetPath);
+                var importer = AssetImporter.GetAtPath(assetPath) as PluginImporter;
                 if (importer == null)
                 {
                     continue;
