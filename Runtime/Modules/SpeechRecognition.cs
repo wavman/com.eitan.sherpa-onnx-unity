@@ -286,7 +286,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             config.ModelConfig.NumThreads = context.ThreadCount;
             config.ModelConfig.Debug = 0;
             config.ModelConfig.Provider = ToNativeProvider(ExecutionProvider);
-            config.DecodingMethod = "greedy_search";
+            config.DecodingMethod = ResolveOnlineDecodingMethod(metadata?.modelId, _modelType);
             config.MaxActivePaths = 4;
             config.EnableEndpoint = 1;
             config.Rule1MinTrailingSilence = _options.Rule1MinTrailingSilence;
@@ -312,7 +312,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                         ModelFileCriteria.FromKeywords("decoder"));
                     break;
                 case SpeechRecognitionModelType.Online_Transducer:
-                    config.DecodingMethod = "modified_beam_search";
                     config.ModelConfig.Transducer.Encoder = ModelFileResolver.ResolveRequiredFileWithBindings(
                         metadata,
                         "Transducer encoder",
@@ -373,6 +372,23 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             }
 
             return config;
+        }
+
+        internal static string ResolveOnlineDecodingMethod(
+            string modelId,
+            SpeechRecognitionModelType modelType)
+        {
+            if (modelType != SpeechRecognitionModelType.Online_Transducer)
+            {
+                return "greedy_search";
+            }
+
+            // sherpa-onnx's OnlineRecognizerTransducerNeMoImpl terminates the host process when it
+            // receives any decoding method other than greedy_search. Keep the capability decision
+            // inside the recognizer module so Unity callers cannot accidentally select a fatal mode.
+            bool isNemoFamily = !string.IsNullOrWhiteSpace(modelId)
+                                && modelId.IndexOf("nemo", StringComparison.OrdinalIgnoreCase) >= 0;
+            return isNemoFamily ? "greedy_search" : "modified_beam_search";
         }
 
         private OfflineRecognizerConfig CreateOfflineRecognizerConfig(SherpaONNXModelMetadata metadata, int sampleRate, RecognizerConfigContext context)
