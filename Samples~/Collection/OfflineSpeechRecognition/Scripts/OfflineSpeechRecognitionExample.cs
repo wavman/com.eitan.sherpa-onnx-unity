@@ -178,9 +178,17 @@ namespace Eitan.SherpaONNXUnity.Samples
                 var options = new List<Dropdown.OptionData>();
                 foreach (var model in manifest.models)
                 {
-                    if (!SherpaONNXUnityAPI.IsOnlineModel(model.modelId))
+                    if (string.IsNullOrWhiteSpace(model.modelId))
                     {
-                        options.Add(new Dropdown.OptionData(model.modelId));
+                        continue;
+                    }
+
+                    var spec = await SherpaONNXUnityAPI.ResolveSpeechRecognitionModelAsync(
+                        model.modelId,
+                        cancellationToken).ConfigureAwait(true);
+                    if (spec.CanInitialize && !spec.IsOnline)
+                    {
+                        options.Add(new Dropdown.OptionData(spec.ModelId));
                     }
                 }
 

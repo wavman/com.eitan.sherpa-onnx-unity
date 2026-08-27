@@ -25,6 +25,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
         public int numberOfSpeakers;
         public int sampleRate = 16000;
         public string modelTypeHint = string.Empty;
+        public string runtimeFamilyHint = string.Empty;
         public List<SherpaONNXModelFileBinding> fileBindings = new List<SherpaONNXModelFileBinding>();
 
         public string remoteManifestUrl = string.Empty;
@@ -49,6 +50,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
                 numberOfSpeakers = numberOfSpeakers,
                 sampleRate = sampleRate,
                 modelTypeHint = modelTypeHint?.Trim(),
+                runtimeFamilyHint = runtimeFamilyHint?.Trim(),
                 fileBindings = fileBindings ?? new List<SherpaONNXModelFileBinding>()
             };
         }

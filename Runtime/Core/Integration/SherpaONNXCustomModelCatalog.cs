@@ -110,6 +110,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
             metadata.downloadUrl = metadata.downloadUrl?.Trim();
             metadata.downloadFileHash = metadata.downloadFileHash?.Trim();
             metadata.modelTypeHint = metadata.modelTypeHint?.Trim();
+            metadata.runtimeFamilyHint = metadata.runtimeFamilyHint?.Trim();
             NormalizeBindings(metadata.fileBindings);
             return metadata;
         }
@@ -124,6 +125,9 @@ namespace Eitan.SherpaONNXUnity.Runtime
                 downloadUrl = metadata.downloadUrl,
                 downloadFileHash = metadata.downloadFileHash,
                 modelTypeHint = metadata.modelTypeHint,
+                runtimeFamilyHint = metadata.runtimeFamilyHint,
+                runtimeProfileId = metadata.runtimeProfileId,
+                definitionProvenance = metadata.definitionProvenance,
                 numberOfSpeakers = metadata.numberOfSpeakers,
                 sampleRate = metadata.sampleRate,
                 fileBindings = new List<SherpaONNXModelFileBinding>()

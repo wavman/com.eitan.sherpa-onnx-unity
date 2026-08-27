@@ -189,6 +189,27 @@ namespace Eitan.SherpaONNXUnity.Tests
         }
 
         [Test]
+        public void Bound_DirectoryKey_IsResolvedAsDirectoryWithoutNameFallback()
+        {
+            const string tokenizerDirectory = "custom-tokenizer-assets";
+            Directory.CreateDirectory(Full(tokenizerDirectory));
+            File.WriteAllText(Full(Path.Combine(tokenizerDirectory, "tokenizer.json")), "{\"version\":1}");
+            _metadata.fileBindings.Add(new SherpaONNXModelFileBinding
+            {
+                key = SherpaONNXModelFileKey.Tokenizer,
+                path = tokenizerDirectory,
+            });
+
+            string resolved = ModelFileResolver.ResolveRequiredDirectoryWithBindings(
+                _metadata,
+                "tokenizer directory",
+                null,
+                new[] { SherpaONNXModelFileKey.Tokenizer });
+
+            Assert.That(resolved, Is.EqualTo(Full(tokenizerDirectory)));
+        }
+
+        [Test]
         public void Keywords_Int8_Finds_Int8_Models()
         {
             var matches = _metadata.GetModelFilePathByKeywords("int8");

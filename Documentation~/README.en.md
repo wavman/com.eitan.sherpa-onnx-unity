@@ -47,6 +47,9 @@ Transcribes speech to text. Use realtime recognition for microphone streams and 
 
 - Components: `RealtimeSpeechRecognizerComponent`, `OfflineSpeechRecognizerComponent`
 - API: `SpeechRecognition.TranscribeAsync(...)`, `SpeechRecognition.SpeechTranscriptionAsync(...)`
+- Offline component seam: `TranscribeSamplesAsync(...)`, `WarmUpAsync(...)`, `CancelAndDrainAsync(...)`, and `DisposeModuleAsync()`
+- Offline diagnostics: `ModelLoadDuration`, `WarmUpDuration`, `ActiveTranscriptionCount`, `PendingSegmentCount`, `DroppedSegmentCount`, and `BusySegmentCount`
+- Successful offline `TranscriptionResult` values expose `Timings`, a managed-side breakdown for semaphore wait, worker dispatch, stream creation, `AcceptWaveform`, the offline `Decode` call, result materialization, post-processing, disposal, and worker/module totals. `OfflineDecodeCall` is the observed C API call span, not GPU kernel time; uninstrumented/non-success paths report `IsAvailable == false`.
 - Samples: `RealtimeSpeechRecognition`, `OfflineSpeechRecognition`
 
 ### <a id="speech-synthesis"></a>Speech Synthesis
@@ -175,7 +178,23 @@ SherpaONNXUnityAPI.RegisterCustomModel(metadata);
 SherpaONNXUnityAPI.RegisterCustomModels(models);
 ```
 
-Minimum manifest entry:
+Speech-recognition callers should resolve model semantics through the same SSOT used by the runtime:
+
+```csharp
+SherpaONNXSpeechRecognitionModelSpec spec =
+    await SherpaONNXUnityAPI.ResolveSpeechRecognitionModelAsync(modelId, cancellationToken);
+```
+
+`spec.CanInitialize` is true only for a registered Model Definition with a supported topology. Official checksum entries contribute download URL/hash data only; a checksum-only (`DistributionOnly`) record cannot initialize a native recognizer. Local custom settings are the explicit user-authorized override layer.
+
+Package-owned speech-recognition definitions may be stored in the versioned Resource manifest at
+`Runtime/Resources/SherpaONNX/ModelDefinitions/asr-model-definitions.v1.json`. The JSON stores checkpoint facts only. A named C# Runtime Profile owns online/offline mode, native model type, runtime family, decoder policy, and required file/directory roles. Resolve these facts through `ResolveSpeechRecognitionModelAsync`; do not parse the package manifest from consuming code.
+
+Manifest-backed specs expose `RuntimeProfileId`, `DefinitionProvenance`, and `RequiredFiles`. `DefinitionProvenance` identifies the source, manifest kind, schema version, and SHA-256 of the exact raw manifest bytes. `RequiredFiles` carries both the semantic role and whether the path must be a file or directory; `RequiredFileKeys` remains as a compatibility view.
+
+`SherpaONNXUnityAPI.IsOnlineModel` is retained only as an obsolete model-name heuristic for source compatibility. It does not consult the registry and must not be used for eligibility or runtime configuration.
+
+Minimum **legacy custom model manifest** entry (this is not the package Model Definition schema above):
 
 ```json
 {
@@ -185,11 +204,14 @@ Minimum manifest entry:
   "downloadUrl": "https://your.cdn/path/to/model.zip",
   "downloadFileHash": "sha256-hex",
   "modelTypeHint": "",
+  "runtimeFamilyHint": "",
   "fileBindings": [],
   "numberOfSpeakers": 0,
   "sampleRate": 16000
 }
 ```
+
+Legacy custom entries may provide explicit `modelTypeHint`, `runtimeFamilyHint`, and `fileBindings`. They remain a compatibility and user-override path; package-owned checkpoint facts belong in the versioned Model Definition manifest and obtain runtime semantics from a named Runtime Profile.
 
 ## Platform Notes
 

@@ -1,0 +1,79 @@
+{
+  "manifestKind": "sherpa-onnx-unity-model-definitions",
+  "schemaVersion": 1,
+  "module": "speech-recognition",
+  "definitions": [
+    {
+      "modelId": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
+      "runtimeProfile": "sherpa.online.zipformer-transducer.v1",
+      "sampleRate": 16000
+    },
+    {
+      "modelId": "sherpa-onnx-x-asr-480ms-streaming-zipformer-transducer-zh-en-punct-2026-06-05",
+      "runtimeProfile": "sherpa.online.zipformer-transducer.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "Encoder", "path": "encoder.onnx" },
+        { "role": "Decoder", "path": "decoder.onnx" },
+        { "role": "Joiner", "path": "joiner.onnx" },
+        { "role": "Tokens", "path": "tokens.txt" }
+      ]
+    },
+    {
+      "modelId": "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+      "runtimeProfile": "sherpa.online.nemo-transducer.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "Encoder", "path": "encoder.int8.onnx" },
+        { "role": "Decoder", "path": "decoder.int8.onnx" },
+        { "role": "Joiner", "path": "joiner.int8.onnx" },
+        { "role": "Tokens", "path": "tokens.txt" }
+      ]
+    },
+    {
+      "modelId": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+      "runtimeProfile": "sherpa.offline.qwen3-asr.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "ConvFrontend", "path": "conv_frontend.onnx" },
+        { "role": "Encoder", "path": "encoder.int8.onnx" },
+        { "role": "Decoder", "path": "decoder.int8.onnx" },
+        { "role": "Tokenizer", "path": "tokenizer" }
+      ]
+    },
+    {
+      "modelId": "Qwen3-ASR-1.7B-ONNX",
+      "runtimeProfile": "sherpa.offline.qwen3-asr.external-data.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "ConvFrontend", "path": "conv_frontend.onnx" },
+        { "role": "Encoder", "path": "encoder.onnx" },
+        { "role": "EncoderExternalData", "path": "encoder.onnx.data" },
+        { "role": "Decoder", "path": "decoder.onnx" },
+        { "role": "DecoderExternalData", "path": "decoder.onnx.data" },
+        { "role": "Tokenizer", "path": "tokenizer" }
+      ]
+    },
+    {
+      "modelId": "sherpa-onnx-funasr-nano-int8-2025-12-30",
+      "runtimeProfile": "sherpa.offline.funasr-nano.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "EncoderAdaptor", "path": "encoder_adaptor.int8.onnx" },
+        { "role": "Llm", "path": "llm.int8.onnx" },
+        { "role": "Embedding", "path": "embedding.int8.onnx" },
+        { "role": "Tokenizer", "path": "Qwen3-0.6B" }
+      ]
+    },
+    {
+      "modelId": "sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26",
+      "runtimeProfile": "sherpa.offline.fire-red-asr.v1",
+      "sampleRate": 16000,
+      "fileBindings": [
+        { "role": "Encoder", "path": "encoder.int8.onnx" },
+        { "role": "Decoder", "path": "decoder.int8.onnx" },
+        { "role": "Tokens", "path": "tokens.txt" }
+      ]
+    }
+  ]
+}

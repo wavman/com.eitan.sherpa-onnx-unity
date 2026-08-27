@@ -13,11 +13,18 @@ namespace Eitan.SherpaONNXUnity.Runtime
         public string downloadUrl;
         public string downloadFileHash;
         public string modelTypeHint;
+        public string runtimeFamilyHint;
+        [System.NonSerialized] internal string runtimeProfileId;
+        [System.NonSerialized] internal SherpaONNXModelDefinitionProvenance definitionProvenance;
         public List<SherpaONNXModelFileBinding> fileBindings = new List<SherpaONNXModelFileBinding>();
         // public string[] modelFileNames;
         // public string[] modelFileHashes;
         public int numberOfSpeakers;
         public int sampleRate = 16000;
+
+        [System.NonSerialized] public SherpaONNXModelRegistrationSource registrationSource;
+        [System.NonSerialized] public bool hasModelDefinition;
+        [System.NonSerialized] public bool hasDistributionRecord;
     }
 
     public enum SherpaONNXModelFileKey
@@ -57,7 +64,9 @@ namespace Eitan.SherpaONNXUnity.Runtime
         Tdnn,
         Gtcrn,
         Ced,
-        Zipformer
+        Zipformer,
+        EncoderExternalData,
+        DecoderExternalData
     }
 
     [System.Serializable]

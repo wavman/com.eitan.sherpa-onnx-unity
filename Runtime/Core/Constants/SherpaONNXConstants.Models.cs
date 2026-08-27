@@ -10,34 +10,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 // online models
                 new SherpaONNXModelMetadata
                 {
-                    modelId = "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
-                    modelTypeHint = nameof(SpeechRecognitionModelType.Online_Transducer),
-                    fileBindings = new System.Collections.Generic.List<SherpaONNXModelFileBinding>
-                    {
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Encoder,
-                            path = "encoder.int8.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Decoder,
-                            path = "decoder.int8.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Joiner,
-                            path = "joiner.int8.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Tokens,
-                            path = "tokens.txt",
-                        },
-                    },
-                },
-                new SherpaONNXModelMetadata
-                {
                     modelId = "sherpa-onnx-streaming-zipformer-zh-xlarge-int8-2025-06-30",
                 },
                 new SherpaONNXModelMetadata
@@ -71,10 +43,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 new SherpaONNXModelMetadata
                 {
                     modelId = "sherpa-onnx-streaming-zipformer-en-2023-02-21",
-                },
-                new SherpaONNXModelMetadata
-                {
-                    modelId = "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
                 },
                 new SherpaONNXModelMetadata
                 {
@@ -333,39 +301,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 },
                 new SherpaONNXModelMetadata
                 {
-                    modelId = "sherpa-onnx-funasr-nano-int8-2025-12-30",
-                },
-                new SherpaONNXModelMetadata
-                {
                     modelId = "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01",
-                },
-                new SherpaONNXModelMetadata
-                {
-                    modelId = "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
-                    modelTypeHint = nameof(SpeechRecognitionModelType.Offline_Qwen3Asr),
-                    fileBindings = new System.Collections.Generic.List<SherpaONNXModelFileBinding>
-                    {
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.ConvFrontend,
-                            path = "conv_frontend.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Encoder,
-                            path = "encoder.int8.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Decoder,
-                            path = "decoder.int8.onnx",
-                        },
-                        new SherpaONNXModelFileBinding
-                        {
-                            key = SherpaONNXModelFileKey.Tokenizer,
-                            path = "tokenizer",
-                        },
-                    },
                 },
                 new SherpaONNXModelMetadata
                 {

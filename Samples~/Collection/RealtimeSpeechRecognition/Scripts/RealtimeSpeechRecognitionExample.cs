@@ -2,6 +2,7 @@
 namespace Eitan.SherpaONNXUnity.Samples
 {
     using System;
+    using System.Collections.Generic;
 
     using System.Linq;
     using System.Threading;
@@ -161,10 +162,17 @@ namespace Eitan.SherpaONNXUnity.Samples
                     return;
                 }
 
-                var options = manifest.models
-                    .Where(m => !string.IsNullOrWhiteSpace(m.modelId) && SherpaONNXUnity.Runtime.Utilities.SherpaUtils.Model.IsOnlineModel(m.modelId))
-                    .Select(m => new Dropdown.OptionData(m.modelId))
-                    .ToList();
+                var options = new List<Dropdown.OptionData>();
+                foreach (var model in manifest.models.Where(m => !string.IsNullOrWhiteSpace(m.modelId)))
+                {
+                    var spec = await SherpaONNXUnityAPI.ResolveSpeechRecognitionModelAsync(
+                        model.modelId,
+                        cancellationToken).ConfigureAwait(true);
+                    if (spec.CanInitialize && spec.IsOnline)
+                    {
+                        options.Add(new Dropdown.OptionData(spec.ModelId));
+                    }
+                }
 
                 modelDropdown.AddOptions(options);
                 var defaultIndex = options.FindIndex(m => m.text == defaultModelID);

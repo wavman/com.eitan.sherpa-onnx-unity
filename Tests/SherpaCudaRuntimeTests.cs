@@ -23,5 +23,26 @@ namespace Eitan.SherpaONNXUnity.Tests
                 new[] { "cublasLt64_13.dll", "cublas64_13.dll", "cufft64_12.dll", "cudnn64_9.dll" },
                 SherpaCudaRuntimeDiagnostics.RequiredSystemDlls);
         }
+
+        [Test]
+        public void CpuDiagnosticIsExplicitlyNotApplicable()
+        {
+            SherpaCudaProviderDiagnostics snapshot =
+                SherpaCudaRuntimeDiagnostics.CreateNotApplicable(SherpaONNXExecutionProvider.Cpu);
+
+            Assert.That(snapshot.Status, Is.EqualTo(SherpaCudaProviderDiagnosticStatus.NotApplicable));
+            Assert.That(snapshot.IsApplicable, Is.False);
+            Assert.That(snapshot.IsPassed, Is.False);
+            Assert.That(snapshot.Message, Does.Contain("not requested"));
+            Assert.That(snapshot.Schema, Is.EqualTo(SherpaCudaProviderDiagnostics.SchemaVersion));
+        }
+
+        [Test]
+        public void LoadedDependencyContractIncludesCudaProviderModule()
+        {
+            CollectionAssert.Contains(
+                SherpaCudaRuntimeDiagnostics.RequiredLoadedDlls,
+                "onnxruntime_providers_cuda.dll");
+        }
     }
 }

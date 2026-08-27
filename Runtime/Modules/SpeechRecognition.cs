@@ -23,6 +23,8 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             public string Language { get; set; }
             public SherpaONNXExecutionProvider ExecutionProvider { get; set; } = SherpaONNXExecutionProvider.Cpu;
             public bool WarmUpOnInitialization { get; set; } = true;
+            public SherpaONNXSpeechRecognitionModeRequirement ModeRequirement { get; set; }
+                = SherpaONNXSpeechRecognitionModeRequirement.Any;
         }
 
         private OnlineRecognizer _onlineRecognizer;
@@ -30,6 +32,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
         private OfflineRecognizer _offlineRecognizer;
 
         private SpeechRecognitionModelType _modelType;
+        private SherpaONNXSpeechRecognitionModelSpec _modelSpec;
         private readonly object _lockObject = new object();
         private int _modelSampleRate;
         private float[] _endpointPaddingBuffer;
@@ -40,11 +43,30 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
         private readonly int _maxPendingTranscriptions;
         private readonly bool _dropIfBusy;
         private int _pendingTranscriptions;
+        private SherpaCudaProviderDiagnostics _cudaProviderDiagnostics;
 
         public SherpaONNXExecutionProvider ExecutionProvider => _options.ExecutionProvider;
         public TimeSpan ModelLoadDuration { get; private set; }
         public TimeSpan WarmUpDuration { get; private set; }
         public bool WasWarmedUp { get; private set; }
+        public SherpaONNXSpeechRecognitionModelSpec ResolvedModelSpec => _modelSpec;
+        public SherpaCudaProviderDiagnostics CudaProviderDiagnostics =>
+            _cudaProviderDiagnostics
+            ?? SherpaCudaRuntimeDiagnostics.CreateNotApplicable(ExecutionProvider);
+
+        /// <summary>
+        /// Re-checks the loaded CUDA provider without changing the recognizer or
+        /// execution provider. The returned snapshot is suitable for a Run/Case
+        /// diagnostic record.
+        /// </summary>
+        public SherpaCudaProviderDiagnostics RefreshCudaProviderDiagnostics(
+            SherpaCudaProviderDiagnosticStage stage = SherpaCudaProviderDiagnosticStage.PostDecode)
+        {
+            _cudaProviderDiagnostics = ExecutionProvider == SherpaONNXExecutionProvider.Cuda
+                ? SherpaCudaRuntimeDiagnostics.CaptureLoadedCudaProvider(stage)
+                : SherpaCudaRuntimeDiagnostics.CreateNotApplicable(ExecutionProvider);
+            return _cudaProviderDiagnostics;
+        }
 
         private readonly struct RecognizerConfigContext
         {
@@ -72,6 +94,84 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             Error
         }
 
+        /// <summary>
+        /// Monotonic, managed-side observations of one successful offline
+        /// transcription. These values describe the C# call boundaries; in
+        /// particular, <see cref="OfflineDecodeCall"/> is not GPU kernel time.
+        /// The default value represents an uninstrumented result.
+        /// </summary>
+        public readonly struct TranscriptionTimings
+        {
+            public TranscriptionTimings(
+                TimeSpan moduleSemaphoreWait,
+                TimeSpan workerDispatchWait,
+                TimeSpan streamCreate,
+                TimeSpan acceptWaveform,
+                TimeSpan offlineDecodeCall,
+                TimeSpan resultMaterialization,
+                TimeSpan postProcessing,
+                TimeSpan streamDispose,
+                TimeSpan workerTotal,
+                TimeSpan moduleTotal)
+            {
+                ModuleSemaphoreWait = EnsureNonNegative(moduleSemaphoreWait, nameof(moduleSemaphoreWait));
+                WorkerDispatchWait = EnsureNonNegative(workerDispatchWait, nameof(workerDispatchWait));
+                StreamCreate = EnsureNonNegative(streamCreate, nameof(streamCreate));
+                AcceptWaveform = EnsureNonNegative(acceptWaveform, nameof(acceptWaveform));
+                OfflineDecodeCall = EnsureNonNegative(offlineDecodeCall, nameof(offlineDecodeCall));
+                ResultMaterialization = EnsureNonNegative(resultMaterialization, nameof(resultMaterialization));
+                PostProcessing = EnsureNonNegative(postProcessing, nameof(postProcessing));
+                StreamDispose = EnsureNonNegative(streamDispose, nameof(streamDispose));
+                WorkerTotal = EnsureNonNegative(workerTotal, nameof(workerTotal));
+                ModuleTotal = EnsureNonNegative(moduleTotal, nameof(moduleTotal));
+                IsAvailable = true;
+            }
+
+            public bool IsAvailable { get; }
+            public TimeSpan ModuleSemaphoreWait { get; }
+            public TimeSpan WorkerDispatchWait { get; }
+            public TimeSpan StreamCreate { get; }
+            public TimeSpan AcceptWaveform { get; }
+            public TimeSpan OfflineDecodeCall { get; }
+            public TimeSpan ResultMaterialization { get; }
+            public TimeSpan PostProcessing { get; }
+            public TimeSpan StreamDispose { get; }
+            public TimeSpan WorkerTotal { get; }
+            public TimeSpan ModuleTotal { get; }
+
+            internal TranscriptionTimings WithModuleBoundary(
+                TimeSpan moduleSemaphoreWait,
+                TimeSpan moduleTotal)
+            {
+                if (!IsAvailable)
+                {
+                    return default;
+                }
+
+                return new TranscriptionTimings(
+                    moduleSemaphoreWait,
+                    WorkerDispatchWait,
+                    StreamCreate,
+                    AcceptWaveform,
+                    OfflineDecodeCall,
+                    ResultMaterialization,
+                    PostProcessing,
+                    StreamDispose,
+                    WorkerTotal,
+                    moduleTotal);
+            }
+
+            private static TimeSpan EnsureNonNegative(TimeSpan value, string parameterName)
+            {
+                if (value < TimeSpan.Zero)
+                {
+                    throw new ArgumentOutOfRangeException(parameterName, "Transcription timing values cannot be negative.");
+                }
+
+                return value;
+            }
+        }
+
         public readonly struct TranscriptionResult
         {
             public TranscriptionResult(
@@ -81,7 +181,8 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                 Exception error = null,
                 string[] tokens = null,
                 float[] timestamps = null,
-                float[] durations = null)
+                float[] durations = null,
+                TranscriptionTimings timings = default)
             {
                 Status = status;
                 Text = text ?? string.Empty;
@@ -90,6 +191,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                 Tokens = tokens ?? Array.Empty<string>();
                 Timestamps = timestamps ?? Array.Empty<float>();
                 Durations = durations ?? Array.Empty<float>();
+                Timings = timings;
             }
 
             public TranscriptionStatus Status { get; }
@@ -99,6 +201,20 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             public string[] Tokens { get; }
             public float[] Timestamps { get; }
             public float[] Durations { get; }
+            public TranscriptionTimings Timings { get; }
+
+            internal TranscriptionResult WithTimings(TranscriptionTimings timings)
+            {
+                return new TranscriptionResult(
+                    Status,
+                    Text,
+                    IsFinal,
+                    Error,
+                    Tokens,
+                    Timestamps,
+                    Durations,
+                    timings);
+            }
         }
 
         protected override SherpaONNXModuleType ModuleType => SherpaONNXModuleType.SpeechRecognition;
@@ -106,11 +222,24 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
         public SpeechRecognition(string modelID, int sampleRate = 16000, SherpaONNXFeedbackReporter reporter = null, bool startImmediately = true, Options options = null, int maxPendingTranscriptions = 2, bool dropIfBusy = true)
             : base(modelID, sampleRate, reporter, startImmediately)
         {
-            IsOnlineModel = SherpaUtils.Model.IsOnlineModel(modelID);
-            _modelType = SherpaUtils.Model.GetSpeechRecognitionModelType(modelID);
             _options = options ?? new Options();
             _maxPendingTranscriptions = Math.Max(1, maxPendingTranscriptions);
             _dropIfBusy = dropIfBusy;
+        }
+
+        protected override void ValidateMetadataBeforePreparation(SherpaONNXModelMetadata metadata)
+        {
+            _modelSpec = SpeechRecognitionModelResolver.Resolve(
+                metadata?.modelId,
+                metadata,
+                _options.ModeRequirement);
+            if (!_modelSpec.CanInitialize)
+            {
+                throw new InvalidOperationException(_modelSpec.Diagnostic);
+            }
+
+            _modelType = _modelSpec.ModelType;
+            IsOnlineModel = _modelSpec.IsOnline;
         }
 
         /// <summary>
@@ -148,29 +277,22 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
         protected override async Task<bool> Initialization(SherpaONNXModelMetadata metadata, int sampleRate, bool isMobilePlatform, SherpaONNXFeedbackReporter reporter, CancellationToken ct)
         {
-            try
+            reporter?.Report(new LoadFeedback(metadata, message: $"Start Loading: {metadata.modelId}"));
+
+            if (_modelSpec == null || !_modelSpec.CanInitialize)
             {
-                reporter?.Report(new LoadFeedback(metadata, message: $"Start Loading: {metadata.modelId}"));
-
-                _modelType = SherpaUtils.Model.ResolveSpeechRecognitionModelType(metadata, out var isOnline);
-                IsOnlineModel = isOnline;
-
-                _modelSampleRate = metadata?.sampleRate > 0 ? metadata.sampleRate : sampleRate;
-
-                if (IsOnlineModel)
-                {
-                    return await LoadOnlineModelAsync(metadata, sampleRate, isMobilePlatform, reporter, ct);
-                }
-                else
-                {
-
-                    return await LoadOfflineModelAsync(metadata, sampleRate, isMobilePlatform, reporter, ct);
-                }
+                ValidateMetadataBeforePreparation(metadata);
             }
-            catch (Exception ex)
+
+            _modelSampleRate = metadata?.sampleRate > 0 ? metadata.sampleRate : sampleRate;
+
+            if (IsOnlineModel)
             {
-                reporter?.Report(new FailedFeedback(metadata, ex.Message, exception: ex));
-                throw;
+                return await LoadOnlineModelAsync(metadata, sampleRate, isMobilePlatform, reporter, ct);
+            }
+            else
+            {
+                return await LoadOfflineModelAsync(metadata, sampleRate, isMobilePlatform, reporter, ct);
             }
         }
 
@@ -189,26 +311,39 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
                 if (IsDisposed) { return Task.FromResult(false); }
 
+                ModelLoadDuration = TimeSpan.Zero;
+                WarmUpDuration = TimeSpan.Zero;
+                WasWarmedUp = false;
                 var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                 _onlineRecognizer = new OnlineRecognizer(config);
                 var initialized = IsSuccessInitializad(_onlineRecognizer);
                 if (initialized)
                 {
                     _onlineStream = _onlineRecognizer.CreateStream();
-                    if (_options.WarmUpOnInitialization)
-                    {
-                        WarmUpOnlineRecognizer(sampleRate, linkedCts.Token);
-                    }
                 }
                 ModelLoadDuration = loadTimer.Elapsed;
-                if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda && initialized &&
-                    !SherpaCudaRuntimeDiagnostics.CheckLoadedCudaProvider(out var cudaMessage))
+                if (initialized && _options.WarmUpOnInitialization)
                 {
-                    _onlineStream?.Dispose();
-                    _onlineRecognizer?.Dispose();
-                    _onlineStream = null;
-                    _onlineRecognizer = null;
-                    throw new InvalidOperationException(cudaMessage);
+                    WarmUpOnlineRecognizer(sampleRate, linkedCts.Token);
+                }
+                if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda)
+                {
+                    _cudaProviderDiagnostics = SherpaCudaRuntimeDiagnostics.CaptureLoadedCudaProvider(
+                        SherpaCudaProviderDiagnosticStage.PostInitializationWarmup);
+                    if (!initialized || !_cudaProviderDiagnostics.IsPassed)
+                    {
+                        if (!initialized)
+                        {
+                            throw new InvalidOperationException(
+                                "Online recognizer initialization failed before the CUDA provider could be verified.");
+                        }
+
+                        _onlineStream?.Dispose();
+                        _onlineRecognizer?.Dispose();
+                        _onlineStream = null;
+                        _onlineRecognizer = null;
+                        throw new InvalidOperationException(_cudaProviderDiagnostics.Message);
+                    }
                 }
                 reporter?.Report(new LoadFeedback(metadata, message: $"Loaded online model: {metadata.modelId} ({ExecutionProvider}, load={ModelLoadDuration.TotalMilliseconds:0} ms, warmup={WarmUpDuration.TotalMilliseconds:0} ms)"));
                 return Task.FromResult(initialized);
@@ -232,22 +367,36 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
                  try
                  {
+                     ModelLoadDuration = TimeSpan.Zero;
+                     WarmUpDuration = TimeSpan.Zero;
+                     WasWarmedUp = false;
                      var loadTimer = System.Diagnostics.Stopwatch.StartNew();
                      _offlineRecognizer = new OfflineRecognizer(config);
                      var initialized = IsSuccessInitializad(_offlineRecognizer);
+                     ModelLoadDuration = loadTimer.Elapsed;
 
                      if (initialized && _options.WarmUpOnInitialization)
                      {
                          WarmUpOfflineRecognizer(sampleRate, linkedCts.Token);
                      }
-                     ModelLoadDuration = loadTimer.Elapsed;
 
-                     if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda && initialized &&
-                         !SherpaCudaRuntimeDiagnostics.CheckLoadedCudaProvider(out var cudaMessage))
+                     if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda)
                      {
-                         _offlineRecognizer.Dispose();
-                         _offlineRecognizer = null;
-                         throw new InvalidOperationException(cudaMessage);
+                         _cudaProviderDiagnostics = SherpaCudaRuntimeDiagnostics.CaptureLoadedCudaProvider(
+                             SherpaCudaProviderDiagnosticStage.PostInitializationWarmup);
+                         if (!initialized || !_cudaProviderDiagnostics.IsPassed)
+                         {
+                             if (_offlineRecognizer != null)
+                             {
+                                 _offlineRecognizer.Dispose();
+                                 _offlineRecognizer = null;
+                             }
+
+                             throw new InvalidOperationException(
+                                 !initialized
+                                     ? "Offline recognizer initialization failed before the CUDA provider could be verified."
+                                     : _cudaProviderDiagnostics.Message);
+                         }
                      }
 
                      if (initialized)
@@ -270,6 +419,12 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                     reporter?.Report(new FailedFeedback(metadata, message: ex.Message, exception: ex));
                     if (ExecutionProvider == SherpaONNXExecutionProvider.Cuda)
                     {
+                        if (_cudaProviderDiagnostics == null
+                            || _cudaProviderDiagnostics.Stage == SherpaCudaProviderDiagnosticStage.Preflight)
+                        {
+                            _cudaProviderDiagnostics = SherpaCudaRuntimeDiagnostics.CaptureLoadedCudaProvider(
+                                SherpaCudaProviderDiagnosticStage.PostInitializationWarmup);
+                        }
                         throw;
                     }
                     return Task.FromResult(false);
@@ -286,7 +441,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             config.ModelConfig.NumThreads = context.ThreadCount;
             config.ModelConfig.Debug = 0;
             config.ModelConfig.Provider = ToNativeProvider(ExecutionProvider);
-            config.DecodingMethod = ResolveOnlineDecodingMethod(metadata?.modelId, _modelType);
+            config.DecodingMethod = _modelSpec.DecodingMethod;
             config.MaxActivePaths = 4;
             config.EnableEndpoint = 1;
             config.Rule1MinTrailingSilence = _options.Rule1MinTrailingSilence;
@@ -336,7 +491,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                     break;
                 case SpeechRecognitionModelType.Online_Ctc:
                 case SpeechRecognitionModelType.Online_Zipformer2Ctc:
-                    config.DecodingMethod = "greedy_search";
                     config.ModelConfig.Zipformer2Ctc.Model = ModelFileResolver.ResolveRequiredFileWithBindings(
                         metadata,
                         "CTC model",
@@ -346,7 +500,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                         ModelFileCriteria.FromKeywords("model", "ctc"));
                     break;
                 case SpeechRecognitionModelType.Online_Nemo_Ctc:
-                    config.DecodingMethod = "greedy_search";
                     config.ModelConfig.NemoCtc.Model = ModelFileResolver.ResolveRequiredFileWithBindings(
                         metadata,
                         "NeMo CTC model",
@@ -357,7 +510,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                         ModelFileCriteria.FromKeywords("model", "ctc"));
                     break;
                 case SpeechRecognitionModelType.Online_Tone_Ctc:
-                    config.DecodingMethod = "greedy_search";
                     config.ModelConfig.ToneCtc.Model = ModelFileResolver.ResolveRequiredFileWithBindings(
                         metadata,
                         "Tone CTC model",
@@ -374,23 +526,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             return config;
         }
 
-        internal static string ResolveOnlineDecodingMethod(
-            string modelId,
-            SpeechRecognitionModelType modelType)
-        {
-            if (modelType != SpeechRecognitionModelType.Online_Transducer)
-            {
-                return "greedy_search";
-            }
-
-            // sherpa-onnx's OnlineRecognizerTransducerNeMoImpl terminates the host process when it
-            // receives any decoding method other than greedy_search. Keep the capability decision
-            // inside the recognizer module so Unity callers cannot accidentally select a fatal mode.
-            bool isNemoFamily = !string.IsNullOrWhiteSpace(modelId)
-                                && modelId.IndexOf("nemo", StringComparison.OrdinalIgnoreCase) >= 0;
-            return isNemoFamily ? "greedy_search" : "modified_beam_search";
-        }
-
         private OfflineRecognizerConfig CreateOfflineRecognizerConfig(SherpaONNXModelMetadata metadata, int sampleRate, RecognizerConfigContext context)
         {
             var config = new OfflineRecognizerConfig(true);
@@ -400,7 +535,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             config.ModelConfig.NumThreads = context.ThreadCount;
             config.ModelConfig.Provider = ToNativeProvider(ExecutionProvider);
             config.ModelConfig.ModelType = SherpaUtils.Model.GetOfflineModelTypeString(_modelType, metadata);
-            config.DecodingMethod = "greedy_search";
+            config.DecodingMethod = _modelSpec.DecodingMethod;
             config.MaxActivePaths = 4;
             config.RuleFsts = string.Empty;
 
@@ -409,7 +544,6 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             {
                 case SpeechRecognitionModelType.Offline_Transducer:
 
-                    config.DecodingMethod = "modified_beam_search";
                     config.ModelConfig.Transducer.Encoder = ModelFileResolver.ResolveRequiredFileWithBindings(
                         metadata,
                         "Transducer encoder",
@@ -524,7 +658,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                         new[] { SherpaONNXModelFileKey.Embedding },
                         ModelFileCriteria.FromKeywords("embedding", context.Int8Keyword),
                         ModelFileCriteria.FromKeywords("embedding"));
-                    config.ModelConfig.FunAsrNano.Tokenizer = ModelFileResolver.ResolveRequiredFileWithBindings(
+                    config.ModelConfig.FunAsrNano.Tokenizer = ModelFileResolver.ResolveRequiredDirectoryWithBindings(
                         metadata,
                         "FunASR Nano tokenizer folder",
                         context.FallbackReporter,
@@ -557,7 +691,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                         new[] { SherpaONNXModelFileKey.Decoder },
                         ModelFileCriteria.FromKeywords("decoder", context.Int8Keyword),
                         ModelFileCriteria.FromKeywords("decoder"));
-                    config.ModelConfig.Qwen3Asr.Tokenizer = ModelFileResolver.ResolveRequiredFileWithBindings(
+                    config.ModelConfig.Qwen3Asr.Tokenizer = ModelFileResolver.ResolveRequiredDirectoryWithBindings(
                         metadata,
                         "Qwen3 ASR tokenizer folder",
                         context.FallbackReporter,
@@ -961,6 +1095,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
 
         public async Task<TranscriptionResult> TranscribeAsync(float[] audioSamplesFrame, int sampleRate, CancellationToken cancellationToken = default)
         {
+            long moduleStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             if (IsDisposed || runner.IsDisposed)
             {
                 return new TranscriptionResult(TranscriptionStatus.Disposed);
@@ -986,10 +1121,13 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
             CancellationTokenSource linkedCts = null;
             bool acquired = false;
             bool countedPending = false;
+            TimeSpan moduleSemaphoreWait = TimeSpan.Zero;
+            TranscriptionResult result;
             try
             {
                 linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
+                long semaphoreStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (_dropIfBusy)
                 {
                     acquired = _transcriptionSemaphore.Wait(0);
@@ -1003,6 +1141,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                     await _transcriptionSemaphore.WaitAsync(linkedCts.Token).ConfigureAwait(false);
                     acquired = true;
                 }
+                moduleSemaphoreWait = ElapsedSince(semaphoreStartedAt);
 
                 var pending = Interlocked.Increment(ref _pendingTranscriptions);
                 countedPending = true;
@@ -1016,7 +1155,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                     return new TranscriptionResult(TranscriptionStatus.Disposed);
                 }
 
-                return IsOnlineModel
+                result = IsOnlineModel
                     ? await ProcessOnlineTranscriptionAsync(audioSamplesFrame, expectedSampleRate, linkedCts.Token).ConfigureAwait(false)
                     : await ProcessOfflineTranscriptionAsync(audioSamplesFrame, expectedSampleRate, linkedCts.Token).ConfigureAwait(false);
             }
@@ -1041,6 +1180,17 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                 }
                 linkedCts?.Dispose();
             }
+
+            if (!IsOnlineModel
+                && result.Status == TranscriptionStatus.Success
+                && result.Timings.IsAvailable)
+            {
+                result = result.WithTimings(result.Timings.WithModuleBoundary(
+                    moduleSemaphoreWait,
+                    ElapsedSince(moduleStartedAt)));
+            }
+
+            return result;
         }
 
         public async Task<string> SpeechTranscriptionAsync(float[] audioSamplesFrame, int sampleRate, CancellationToken cancellationToken = default)
@@ -1222,12 +1372,14 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
         {
             if (ExecutionProvider != SherpaONNXExecutionProvider.Cuda)
             {
+                _cudaProviderDiagnostics = SherpaCudaRuntimeDiagnostics.CreateNotApplicable(ExecutionProvider);
                 return;
             }
 
-            if (!SherpaCudaRuntimeDiagnostics.CheckSystemDependencies(out var message))
+            _cudaProviderDiagnostics = SherpaCudaRuntimeDiagnostics.CaptureSystemDependencies();
+            if (!_cudaProviderDiagnostics.IsPassed)
             {
-                throw new InvalidOperationException(message);
+                throw new InvalidOperationException(_cudaProviderDiagnostics.Message);
             }
         }
 
@@ -1287,8 +1439,11 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                 return Task.FromResult(new TranscriptionResult(TranscriptionStatus.NotReady));
             }
 
+            long dispatchStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             return runner.RunAsync<TranscriptionResult>(ct =>
             {
+                long workerStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                TimeSpan workerDispatchWait = Elapsed(dispatchStartedAt, workerStartedAt);
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, cancellationToken);
                 var combinedCt = linkedCts.Token;
 
@@ -1297,26 +1452,91 @@ namespace Eitan.SherpaONNXUnity.Runtime.Modules
                     return Task.FromResult(new TranscriptionResult(TranscriptionStatus.Disposed));
                 }
 
-                // Create new offline stream for each transcription
                 string text;
                 string[] tokens;
                 float[] timestamps;
                 float[] durations;
-                using (var offlineStream = _offlineRecognizer.CreateStream())
+                TimeSpan streamCreate = TimeSpan.Zero;
+                TimeSpan acceptWaveform = TimeSpan.Zero;
+                TimeSpan offlineDecodeCall = TimeSpan.Zero;
+                TimeSpan resultMaterialization = TimeSpan.Zero;
+                TimeSpan postProcessing = TimeSpan.Zero;
+                TimeSpan streamDispose = TimeSpan.Zero;
+                OfflineStream offlineStream = null;
+                try
                 {
+                    long stageStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                    offlineStream = _offlineRecognizer.CreateStream();
+                    streamCreate = ElapsedSince(stageStartedAt);
+
+                    stageStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     offlineStream.AcceptWaveform(sampleRate, audioSamplesFrame);
+                    acceptWaveform = ElapsedSince(stageStartedAt);
+
                     combinedCt.ThrowIfCancellationRequested();
+
+                    stageStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     _offlineRecognizer.Decode(offlineStream);
+                    offlineDecodeCall = ElapsedSince(stageStartedAt);
+
+                    // Native offline Decode is not interruptible. Honor cancellation as soon as
+                    // control returns, before materializing or publishing a stale result.
+                    combinedCt.ThrowIfCancellationRequested();
+
+                    stageStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     var nativeResult = offlineStream.Result;
                     text = nativeResult.Text;
                     tokens = nativeResult.Tokens;
                     timestamps = nativeResult.Timestamps;
                     durations = nativeResult.Durations;
+                    resultMaterialization = ElapsedSince(stageStartedAt);
 
+                    stageStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
                     text = PostProcessCasing(text);
+                    postProcessing = ElapsedSince(stageStartedAt);
                 }
-                return Task.FromResult(new TranscriptionResult(TranscriptionStatus.Success, text, isFinal: true, tokens: tokens, timestamps: timestamps, durations: durations));
+                finally
+                {
+                    if (offlineStream != null)
+                    {
+                        long disposeStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                        offlineStream.Dispose();
+                        streamDispose = ElapsedSince(disposeStartedAt);
+                    }
+                }
+
+                var timings = new TranscriptionTimings(
+                    moduleSemaphoreWait: TimeSpan.Zero,
+                    workerDispatchWait,
+                    streamCreate,
+                    acceptWaveform,
+                    offlineDecodeCall,
+                    resultMaterialization,
+                    postProcessing,
+                    streamDispose,
+                    workerTotal: ElapsedSince(workerStartedAt),
+                    moduleTotal: TimeSpan.Zero);
+                return Task.FromResult(new TranscriptionResult(
+                    TranscriptionStatus.Success,
+                    text,
+                    isFinal: true,
+                    tokens: tokens,
+                    timestamps: timestamps,
+                    durations: durations,
+                    timings: timings));
             });
+        }
+
+        private static TimeSpan ElapsedSince(long startedAt)
+        {
+            return Elapsed(startedAt, System.Diagnostics.Stopwatch.GetTimestamp());
+        }
+
+        private static TimeSpan Elapsed(long startedAt, long endedAt)
+        {
+            long elapsedTicks = Math.Max(0L, endedAt - startedAt);
+            return TimeSpan.FromSeconds(
+                elapsedTicks / (double)System.Diagnostics.Stopwatch.Frequency);
         }
 
         private void DecodeOnlineStream(CancellationToken cancellationToken)

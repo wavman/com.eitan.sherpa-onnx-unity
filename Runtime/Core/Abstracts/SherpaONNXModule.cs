@@ -32,6 +32,8 @@ namespace Eitan.SherpaONNXUnity.Runtime
         private readonly SherpaONNXFeedbackReporter _externalReporter;
         private readonly bool _isMobilePlatform;
         private readonly DateTime _createdUtc = DateTime.UtcNow;
+        private readonly TaskCompletionSource<bool> _disposalCompletion =
+            new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _disposeState;
         private int _onDestroyInvoked;
 
@@ -61,6 +63,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
         /// Allows callers to await the initialization task or trigger initialization later.
         /// </summary>
         public Task InitializationTask => _initializationTask ?? Task.CompletedTask;
+        public Task DisposalTask => _disposalCompletion.Task;
 
         protected void TraceLifecycle(string message, [CallerMemberName] string caller = null)
         {
@@ -166,7 +169,14 @@ namespace Eitan.SherpaONNXUnity.Runtime
                 }, feedbackArgs);
             });
 
-            var metadata = await SherpaONNXModelRegistry.Instance.GetMetadataAsync(_modelId, ct).ConfigureAwait(false);
+            var metadata = await SherpaONNXModelRegistry.Instance.GetMetadataAsync(_modelId, ModuleType, ct).ConfigureAwait(false);
+            if (metadata == null)
+            {
+                throw new InvalidOperationException(
+                    $"No {ModuleType} model definition is registered for '{_modelId}'. " +
+                    "Distribution records alone cannot initialize a native model.");
+            }
+            ValidateMetadataBeforePreparation(metadata);
 
             var corruptionRecoveryRetryCount = 0;
 
@@ -275,6 +285,14 @@ namespace Eitan.SherpaONNXUnity.Runtime
                     throw;
                 }
             }
+        }
+
+        /// <summary>
+        /// Allows a module to resolve and reject semantic metadata before any download,
+        /// extraction, or native initialization work begins.
+        /// </summary>
+        protected virtual void ValidateMetadataBeforePreparation(SherpaONNXModelMetadata metadata)
+        {
         }
 
         protected static string GetManualInstallTarget(string modelId)
@@ -449,6 +467,15 @@ namespace Eitan.SherpaONNXUnity.Runtime
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>
+        /// Initiates disposal and completes only after tracked work and native handles are released.
+        /// </summary>
+        public async Task DisposeAsync()
+        {
+            Dispose();
+            await DisposalTask.ConfigureAwait(false);
+        }
+
         // 析构函数，作为最后的安全网。它会在对象被GC回收时调用
         ~SherpaONNXModule()
         {
@@ -615,36 +642,36 @@ namespace Eitan.SherpaONNXUnity.Runtime
             // Run cleanup asynchronously to avoid blocking the calling thread (especially the editor main thread).
             _ = Task.Run(async () =>
             {
-                TryWaitInitialization(initTask, timeoutMs: 750);
-
                 try
                 {
+                    if (initTask != null)
+                    {
+                        try
+                        {
+                            await initTask.ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Initialization cancellation/failure is expected during disposal.
+                        }
+                    }
+
                     if (runner != null)
                     {
-                        await runner.WaitForAllAsync(1500).ConfigureAwait(false);
+                        await runner.WaitForAllAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+
+                    InvokeOnDestroySafe();
+                    if (disposing)
+                    {
+                        try { runner?.Dispose(); } catch { }
+                        try { _initCts?.Dispose(); } catch { }
+                        _initCts = null;
                     }
                 }
-                catch
+                finally
                 {
-                    // Swallow cancellations/timeouts on shutdown.
-                }
-
-                // 调用子类的清理方法，释放非托管资源 (Native)
-                if (initTask == null || initTask.IsCompleted)
-                {
-                    InvokeOnDestroySafe();
-                }
-                else
-                {
-                    // Ensure OnDestroy is invoked once initialization finishes/cancels.
-                    _ = initTask.ContinueWith(_ => InvokeOnDestroySafe(), TaskScheduler.Default);
-                }
-
-                if (disposing)
-                {
-                    try { runner?.Dispose(); } catch { }
-                    try { _initCts?.Dispose(); } catch { }
-                    _initCts = null;
+                    _disposalCompletion.TrySetResult(true);
                 }
             });
         }
