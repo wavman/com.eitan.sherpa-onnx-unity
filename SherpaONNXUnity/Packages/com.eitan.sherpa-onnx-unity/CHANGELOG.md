@@ -5,6 +5,132 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http.keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.1.4-exp.11] - 2026-08-27
+
+### Changed
+- Resolved speech-recognition specs now expose defensive metadata snapshots instead of shared mutable registry objects.
+- Package realtime/offline samples now classify models through `ResolveSpeechRecognitionModelAsync` and the resolved `CanInitialize`/`IsOnline` semantics.
+- `SherpaONNXUnityAPI.IsOnlineModel` remains as an obsolete compatibility-only name heuristic; new code must use the async resolved-spec API.
+
+### Fixed
+- Offline cancellation is checked immediately after the non-interruptible native `Decode` call returns, before a stale result is materialized or published.
+- Duplicate normalized Model Definitions in the same module source now fail explicitly instead of silently retaining the first definition.
+- Named ABI layout constants remove repeated raw offsets from the offline-result interop tests without changing the pinned native contract.
+
+### Notes
+- Experimental entries `0.1.4-exp.3` through `0.1.4-exp.10` describe local development checkpoints. Pin an immutable commit only after this review candidate completes Unity validation.
+- No native DLL, native ABI, provider policy, model payload, or model download behavior changed.
+
+## [0.1.4-exp.10] - 2026-08-24
+
+### Added
+- Added manifest-backed Model Definitions for the X-ASR 480 ms streaming Zipformer checkpoint and the FireRedASR2-AED INT8 offline checkpoint.
+- Added an offline FireRed ASR Runtime Profile that reuses the existing `fire_red_asr` native configuration with exact encoder, decoder, and tokens bindings.
+- Added an external-data Qwen3-ASR Runtime Profile and explicit file roles for the accepted third-party 1.7B ONNX artifact, including preflight checks for both `.onnx.data` files.
+
+### Changed
+- The X-ASR checkpoint reuses the existing online Zipformer runtime semantics; the additional `bpe.model` remains an artifact fact and is not a native required input.
+- The third-party Qwen3-ASR 1.7B definition reuses the existing offline Qwen3 native path only after a static graph-contract comparison with the working 0.6B artifact.
+
+### Notes
+- `Ready` remains a static definition and local-file preflight result. Native initialization and transcription are still authoritative.
+- No native ABI, native binary, provider fallback policy, model download behavior, or scene default was changed.
+
+## [0.1.4-exp.9] - 2026-08-24
+
+### Fixed
+- Aligned the managed offline recognizer result layout with the complete sherpa-onnx v1.13.0/v1.13.6 C API struct. The stale layout read `tokens_arr` as token durations.
+- Missing native timestamp or duration arrays now produce empty managed arrays, and corrupt native result counts are rejected before allocation.
+
+### Notes
+- The public transcription result remains intentionally narrow: text, tokens, timestamps, durations, and managed timing diagnostics. This release does not expose the additional native language, emotion, event, log-probability, or segment fields.
+- No native ABI or native binary was changed; this release corrects the managed interop declaration for the pinned native ABI.
+
+## [0.1.4-exp.8] - 2026-08-24
+
+### Added
+- Added immutable, structured CUDA provider diagnostics with preflight and post-initialization loaded-module snapshots.
+- Exposed the latest CUDA diagnostic snapshot through SpeechRecognition, OfflineSpeechRecognizerComponent, and RealtimeSpeechRecognizerComponent.
+
+### Changed
+- Kept the legacy CUDA bool/string checks as compatibility shims over the structured snapshot implementation.
+- CUDA diagnostics now preserve dependency paths, observed relevant native modules, file versions, missing entries, process ID, stage, and UTC timestamp without changing the native ABI.
+
+### Notes
+- A passed snapshot confirms provider/module loading at the sampling point; it does not claim that every ONNX operator executed on the GPU.
+
+## [0.1.4-exp.7] - 2026-08-23
+
+### Added
+- Added an immutable `SpeechRecognition.TranscriptionTimings` breakdown to successful offline transcription results, covering module semaphore wait, worker dispatch, stream creation, waveform acceptance, the offline Decode call, result materialization, post-processing, stream disposal, worker total, and module total.
+
+### Changed
+- `SpeechRecognition.TranscriptionResult` now exposes `Timings`; its constructor accepts the timing value as a final optional parameter so existing callers remain source-compatible.
+- `OfflineSpeechRecognizerComponent` continues to preserve its single-request, cancellation-and-drain, and recognizer-residency behavior while passing the instrumented result through unchanged.
+
+### Notes
+- `OfflineDecodeCall` is a managed observation of the sherpa offline Decode C API call boundary. It is not GPU kernel time and does not claim operator-level attribution.
+- Non-success paths that do not complete the instrumented offline pipeline keep `Timings.IsAvailable == false`.
+
+## [0.1.4-exp.6] - 2026-08-23
+
+### Added
+- Added a strict, versioned package JSON Model Definition manifest and C# Runtime Profile registry for the Zipformer bilingual baseline, Nemotron 3.5 560 ms int8, Qwen3-ASR 0.6B int8, and FunASR Nano int8 checkpoints.
+- Added manifest provenance and typed required-file diagnostics to resolved speech-recognition specs.
+- Added the `com.unity.nuget.newtonsoft-json@3.2.2` runtime dependency for deterministic manifest parsing.
+
+### Changed
+- Checkpoint facts for the four migrated models now come only from the package Resource manifest; mode, topology, runtime family, decoder, and file/directory requirements come only from Runtime Profiles.
+- The remaining ASR catalog continues to use the legacy C# definitions, loaded after package JSON definitions; checksum data remains a distribution-only overlay.
+- Invalid package manifests fail the package definition source as a whole instead of falling through to model-name inference.
+
+### Fixed
+- Local validation can now distinguish a required file from a required directory and report the manifest profile, source, schema, and content SHA used by runtime resolution.
+- Preserved manifest-backed definition semantics and provenance when checksum URL/hash records are overlaid.
+- Retried transient package `Resources.Load` misses after Editor import instead of caching a missing Model Definition for the whole domain.
+
+## [0.1.4-exp.5] - 2026-08-23
+
+### Added
+- Added an explicit built-in Model Definition for `sherpa-onnx-funasr-nano-int8-2025-12-30`, including its offline topology, runtime family, sample rate, and four native file bindings.
+
+### Changed
+- Resolved speech-recognition specs now derive required file roles from explicit bindings when present, keeping package resolution, local catalog eligibility, and native configuration aligned.
+
+### Fixed
+- Prevented the FunASR Nano int8 model from being rejected as incomplete due to generic `model.onnx` and `tokens.txt` requirements.
+- Ensured explicit tokenizer-directory bindings are validated and passed to FunASR Nano and Qwen3 native configs as directories instead of relying on directory-name fallback.
+
+## [0.1.4-exp.4] - 2026-08-23
+
+### Added
+- Added the offline speech-recognizer wrapper contract used by the validation scene: direct sample transcription, warm-up, cancellation-and-drain, pending-queue clearing, and lifecycle diagnostics.
+- Added strict single-request accounting with Busy, active, pending, dropped, and completed-lifecycle state exposed for validation and experiments.
+
+### Changed
+- Offline transcription now consumes a resolved offline model configuration instead of inferring online/offline compatibility from the model ID in the component.
+- Async component disposal waits for queued work and native module disposal, while the existing synchronous `DisposeModule()` entry point remains compatible.
+
+### Fixed
+- Fixed missing `OfflineSpeechRecognizerComponent` APIs that prevented the consumer project's offline validation controller from compiling.
+- Prevented recognizer teardown from disposing a native module while an offline decode is still draining.
+
+## [0.1.4-exp.3] - 2026-08-23
+
+### Added
+- Added a source-aware, immutable speech-recognition model spec and one async resolution API for model semantics, runtime family, decoder, mode, and required file roles.
+- Added explicit registration-source and resolution-level diagnostics for built-in, custom, and distribution-only catalog entries.
+
+### Changed
+- Built-in Model Definitions now always load before checksum Distribution Records are overlaid by exact module and model ID.
+- Registry indexes now include module type and use explicit module-loaded state; local custom definitions may override, while remote custom manifests cannot silently replace built-ins.
+- Speech recognition and validation tooling consume the same resolved spec instead of independently inferring topology or online/offline state from model names.
+
+### Fixed
+- Fixed remote checksum data hiding the built-in Nemotron definition and causing `metadata missing` before initialization.
+- Prevented checksum-only entries and unregistered local directories from reaching native initialization.
+- Fixed EditMode test compilation on Unity 2022 by avoiding an unavailable NUnit attribute and using the package's actual speech-synthesis module enum name.
+
 ## [0.1.4-exp.2] - 2026-08-23
 
 ### Added

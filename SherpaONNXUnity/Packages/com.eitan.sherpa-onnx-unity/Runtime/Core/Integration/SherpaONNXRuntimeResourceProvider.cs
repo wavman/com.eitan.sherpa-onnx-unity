@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Eitan.SherpaONNXUnity.Runtime.Modules;
 using Eitan.SherpaONNXUnity.Runtime.Utilities;
 using UnityEngine;
 
@@ -90,11 +91,31 @@ namespace Eitan.SherpaONNXUnity.Runtime
         public IReadOnlyList<string> RemoteManifestUrls { get; }
     }
 
+    internal sealed class SherpaONNXModelDefinitionManifestSnapshot
+    {
+        private readonly byte[] _content;
+
+        public static readonly SherpaONNXModelDefinitionManifestSnapshot Missing =
+            new SherpaONNXModelDefinitionManifestSnapshot(Array.Empty<byte>(), string.Empty);
+
+        public SherpaONNXModelDefinitionManifestSnapshot(byte[] content, string sourceId)
+        {
+            _content = content == null ? Array.Empty<byte>() : (byte[])content.Clone();
+            SourceId = sourceId ?? string.Empty;
+        }
+
+        public string SourceId { get; }
+        public bool IsAvailable => _content.Length > 0 && !string.IsNullOrWhiteSpace(SourceId);
+        public byte[] GetContentCopy() => (byte[])_content.Clone();
+    }
+
     internal static class SherpaONNXRuntimeResourceProvider
     {
         private static readonly object CacheLock = new object();
         private static SherpaONNXRuntimeSettingsSnapshot s_runtimeSettings = SherpaONNXRuntimeSettingsSnapshot.Default;
         private static SherpaONNXCustomModelCatalogSnapshot s_customCatalog = SherpaONNXCustomModelCatalogSnapshot.Empty;
+        private static SherpaONNXModelDefinitionManifestSnapshot s_asrModelDefinitions =
+            SherpaONNXModelDefinitionManifestSnapshot.Missing;
         private static bool s_preloaded;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -104,6 +125,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
             {
                 s_runtimeSettings = SherpaONNXRuntimeSettingsSnapshot.Default;
                 s_customCatalog = SherpaONNXCustomModelCatalogSnapshot.Empty;
+                s_asrModelDefinitions = SherpaONNXModelDefinitionManifestSnapshot.Missing;
                 s_preloaded = false;
             }
         }
@@ -120,6 +142,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
         {
             if (!Application.isPlaying)
             {
+                UnityMainThreadScheduler.EnsureInitialized();
                 PreloadFromResources();
             }
         }
@@ -153,6 +176,31 @@ namespace Eitan.SherpaONNXUnity.Runtime
             return s_customCatalog;
         }
 
+        public static SherpaONNXModelDefinitionManifestSnapshot GetSpeechRecognitionModelDefinitionsSnapshot()
+        {
+            EnsurePreloaded();
+
+            // InitializeOnLoad can run before a newly added package resource completes its
+            // first AssetDatabase import. Preserve successful snapshots, but retry a transient
+            // miss on the Unity main thread instead of caching Missing for the whole domain.
+            if (!s_asrModelDefinitions.IsAvailable)
+            {
+                UnityMainThreadScheduler.EnsureInitialized();
+                if (UnityMainThreadScheduler.IsMainThread)
+                {
+                    lock (CacheLock)
+                    {
+                        if (!s_asrModelDefinitions.IsAvailable)
+                        {
+                            s_asrModelDefinitions = LoadAsrModelDefinitionManifest();
+                        }
+                    }
+                }
+            }
+
+            return s_asrModelDefinitions;
+        }
+
         private static void EnsurePreloaded()
         {
             if (s_preloaded)
@@ -173,7 +221,19 @@ namespace Eitan.SherpaONNXUnity.Runtime
         {
             s_runtimeSettings = BuildRuntimeSettingsSnapshot(SherpaONNXRuntimeSettings.LoadFromResources()) ?? SherpaONNXRuntimeSettingsSnapshot.Default;
             s_customCatalog = BuildCustomCatalogSnapshot(SherpaONNXCustomModelSettings.LoadFromResources()) ?? SherpaONNXCustomModelCatalogSnapshot.Empty;
+            s_asrModelDefinitions = LoadAsrModelDefinitionManifest();
             s_preloaded = true;
+        }
+
+        private static SherpaONNXModelDefinitionManifestSnapshot LoadAsrModelDefinitionManifest()
+        {
+            TextAsset asset = Resources.Load<TextAsset>(
+                SpeechRecognitionModelDefinitionManifestLoader.ResourcePath);
+            return asset == null
+                ? SherpaONNXModelDefinitionManifestSnapshot.Missing
+                : new SherpaONNXModelDefinitionManifestSnapshot(
+                    asset.bytes,
+                    SpeechRecognitionModelDefinitionManifestLoader.BuiltInSourceId);
         }
 
         private static SherpaONNXRuntimeSettingsSnapshot BuildRuntimeSettingsSnapshot(SherpaONNXRuntimeSettings settings)
@@ -237,6 +297,9 @@ namespace Eitan.SherpaONNXUnity.Runtime
                 downloadUrl = metadata.downloadUrl?.Trim(),
                 downloadFileHash = metadata.downloadFileHash?.Trim(),
                 modelTypeHint = metadata.modelTypeHint?.Trim(),
+                runtimeFamilyHint = metadata.runtimeFamilyHint?.Trim(),
+                runtimeProfileId = metadata.runtimeProfileId?.Trim(),
+                definitionProvenance = metadata.definitionProvenance,
                 numberOfSpeakers = metadata.numberOfSpeakers,
                 sampleRate = metadata.sampleRate
             };

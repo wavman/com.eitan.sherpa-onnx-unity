@@ -3,6 +3,7 @@
 namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 {
     using System;
+    using System.Threading.Tasks;
     using Eitan.SherpaONNXUnity.Runtime;
     using Eitan.SherpaONNXUnity.Runtime.Utilities;
     using UnityEngine;
@@ -84,6 +85,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
         private bool isReady;
         private bool loadInProgress;
         private bool disposeInProgress;
+        private Task moduleDisposalTask = Task.CompletedTask;
 
         /// <summary>
         /// Gets the instantiated module or null when not loaded.
@@ -230,33 +232,57 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
         /// </summary>
         public void DisposeModule()
         {
+            _ = BeginModuleDisposal();
+        }
+
+        /// <summary>
+        /// Releases the hosted module and completes only after its native handles are released.
+        /// </summary>
+        public async Task DisposeModuleAsync()
+        {
+            await BeginModuleDisposal().ConfigureAwait(false);
+        }
+
+        private Task BeginModuleDisposal()
+        {
+            Task disposalTask;
             lock (moduleGate)
             {
                 if (disposeInProgress)
                 {
-                    return;
+                    return moduleDisposalTask;
                 }
+
                 disposeInProgress = true;
+                TModule moduleToDispose = module;
+                module = null;
+                if (moduleToDispose != null)
+                {
+                    moduleToDispose.Dispose();
+                    moduleDisposalTask = moduleToDispose.DisposalTask;
+                }
+                else
+                {
+                    moduleDisposalTask = Task.CompletedTask;
+                }
+
+                loadInProgress = false;
+                disposalTask = moduleDisposalTask;
             }
 
-            try
-            {
-                if (module != null)
+            reporter = null;
+            UpdateReadyState(false);
+            _ = disposalTask.ContinueWith(
+                _ =>
                 {
-                    module.Dispose();
-                    module = null;
-                }
-            }
-            finally
-            {
-                reporter = null;
-                UpdateReadyState(false);
-                lock (moduleGate)
-                {
-                    disposeInProgress = false;
-                    loadInProgress = false;
-                }
-            }
+                    lock (moduleGate)
+                    {
+                        disposeInProgress = false;
+                    }
+                },
+                TaskContinuationOptions.ExecuteSynchronously);
+
+            return disposalTask;
         }
 
         /// <summary>

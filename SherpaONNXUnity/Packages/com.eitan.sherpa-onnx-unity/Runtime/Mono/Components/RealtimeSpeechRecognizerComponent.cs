@@ -113,11 +113,26 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
         public bool WasWarmedUp => Module?.WasWarmedUp ?? false;
 
+        public SherpaCudaProviderDiagnostics CudaProviderDiagnostics =>
+            Module?.CudaProviderDiagnostics
+            ?? SherpaCudaRuntimeDiagnostics.CreateNotApplicable(executionProvider);
+
         public int DroppedChunkCount => totalDroppedChunks;
 
         public Task<bool> WarmUpAsync(CancellationToken cancellationToken = default)
         {
             return Module?.WarmUpAsync(cancellationToken) ?? Task.FromResult(false);
+        }
+
+        public SherpaCudaProviderDiagnostics RefreshCudaProviderDiagnostics(
+            SherpaCudaProviderDiagnosticStage stage = SherpaCudaProviderDiagnosticStage.PostDecode)
+        {
+            if (Module == null)
+            {
+                return CudaProviderDiagnostics;
+            }
+
+            return Module.RefreshCudaProviderDiagnostics(stage);
         }
 
         private readonly Queue<AudioChunk> pendingChunks = new Queue<AudioChunk>();
@@ -150,18 +165,12 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
         protected override SpeechRecognition CreateModule(string resolvedModelId, int resolvedSampleRate, SherpaONNXFeedbackReporter resolvedReporter)
         {
-            if (!SherpaUtils.Model.IsOnlineModel(resolvedModelId))
-            {
-                throw new ArgumentException(
-                    $"{nameof(RealtimeSpeechRecognizerComponent)} requires an online/realtime speech recognition model. Model '{resolvedModelId}' is not online/realtime.",
-                    nameof(resolvedModelId));
-            }
-
             var options = new SpeechRecognition.Options
             {
                 Language = recognitionLanguage,
                 ExecutionProvider = executionProvider,
-                WarmUpOnInitialization = warmUpOnInitialization
+                WarmUpOnInitialization = warmUpOnInitialization,
+                ModeRequirement = SherpaONNXSpeechRecognitionModeRequirement.Online
             };
             if (overrideEndpointRules)
             {

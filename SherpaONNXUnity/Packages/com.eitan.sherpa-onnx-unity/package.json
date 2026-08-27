@@ -30,8 +30,11 @@
     "package",
     "integration"
   ],
-  "version": "0.1.4-exp.2",
+  "version": "0.1.4-exp.11",
   "unity": "2021.3",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.2"
+  },
   "documentationUrl": "https://github.com/wavman/com.eitan.sherpa-onnx-unity/blob/main/SherpaONNXUnity/Packages/com.eitan.sherpa-onnx-unity/Documentation~/README.md",
   "changelogUrl": "https://github.com/wavman/com.eitan.sherpa-onnx-unity/blob/main/SherpaONNXUnity/Packages/com.eitan.sherpa-onnx-unity/CHANGELOG.md",
   "license": "Apache-2.0",

@@ -235,6 +235,32 @@ namespace Eitan.SherpaONNXUnity.Runtime.Utilities
             }
         }
 
+        /// <summary>
+        /// Waits until every tracked operation has left the runner. Unlike the timeout-based
+        /// diagnostic overload, this method never reports completion while native work is still active.
+        /// </summary>
+        public async Task WaitForAllAsync(CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var activeTasks = _activeTasks.Keys.ToArray();
+                if (activeTasks.Length == 0)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await Task.WhenAll(activeTasks).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Faulted/cancelled operations are still drained once their tasks complete.
+                }
+            }
+        }
+
         private async Task<T> ExecuteWithCleanup<T>(Func<CancellationToken, Task<T>> asyncFunc,
                                                   Action<Exception> onComplete,
                                                   CancellationToken cancellationToken)

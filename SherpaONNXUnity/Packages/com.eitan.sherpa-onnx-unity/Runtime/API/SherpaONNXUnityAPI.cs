@@ -4,9 +4,11 @@
 #nullable enable
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Eitan.SherpaONNXUnity.Runtime;
 using Eitan.SherpaONNXUnity.Runtime.Constants;
+using Eitan.SherpaONNXUnity.Runtime.Modules;
 using Eitan.SherpaONNXUnity.Runtime.Native;
 using Eitan.SherpaONNXUnity.Runtime.Utilities;
 
@@ -50,9 +52,29 @@ public static class SherpaONNXUnityAPI
         return manifest.Filter(m => m.moduleType == type).Select(m => m.modelId).ToArray();
     }
 
+    /// <summary>
+    /// Compatibility-only name heuristic. It does not consult registered model semantics.
+    /// </summary>
+    [Obsolete("This method only applies a model-name heuristic. Use ResolveSpeechRecognitionModelAsync and inspect IsOnline/CanInitialize instead.")]
     public static bool IsOnlineModel(string modelID)
     {
         return SherpaUtils.Model.IsOnlineModel(modelID);
+    }
+
+    /// <summary>
+    /// Resolves the registered semantics for a speech-recognition model.
+    /// This is the canonical entry point for UI eligibility and runtime setup.
+    /// </summary>
+    public static async Task<SherpaONNXSpeechRecognitionModelSpec> ResolveSpeechRecognitionModelAsync(
+        string modelId,
+        CancellationToken cancellationToken = default)
+    {
+        var metadata = await SherpaONNXModelRegistry.Instance.GetMetadataAsync(
+            modelId,
+            SherpaONNXModuleType.SpeechRecognition,
+            cancellationToken).ConfigureAwait(true);
+        cancellationToken.ThrowIfCancellationRequested();
+        return SpeechRecognitionModelResolver.Resolve(modelId, metadata);
     }
 
     /// <summary>

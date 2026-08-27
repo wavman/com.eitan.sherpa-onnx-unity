@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Eitan.SherpaONNXUnity.Runtime.Modules;
 using Eitan.SherpaONNXUnity.Runtime.Utilities;
 using UnityEngine.Networking;
 
@@ -806,40 +807,103 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
             return false;
         }
 
-        private static void AddToManifest(SherpaONNXModelManifest manifest, SherpaONNXModelMetadata[] modelMetadataList, SherpaONNXModuleType moduleType)
+        private static SherpaONNXModelMetadata FindManifestEntry(
+            SherpaONNXModelManifest manifest,
+            string modelId,
+            SherpaONNXModuleType moduleType)
         {
-            foreach (var modelConfig in modelMetadataList)
+            return manifest.models.Find(m =>
+                m != null
+                && m.moduleType == moduleType
+                && string.Equals(m.modelId, modelId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        internal static void MergeModelSources(
+            SherpaONNXModelManifest manifest,
+            SherpaONNXModelMetadata[] modelDefinitions,
+            SherpaONNXModelMetadata[] distributionRecords,
+            SherpaONNXModuleType moduleType,
+            SherpaONNXModelRegistrationSource definitionSource = SherpaONNXModelRegistrationSource.BuiltIn)
+        {
+            if (manifest == null)
             {
-                if (modelConfig == null)
+                throw new ArgumentNullException(nameof(manifest));
+            }
+
+            if (manifest.models == null)
+            {
+                manifest.models = new List<SherpaONNXModelMetadata>();
+            }
+
+            foreach (var modelConfig in modelDefinitions ?? Array.Empty<SherpaONNXModelMetadata>())
+            {
+                if (modelConfig == null || !IsUnitySupportedModelId(modelConfig.modelId))
                 {
                     continue;
                 }
 
-                if (!IsUnitySupportedModelId(modelConfig.modelId))
-                {
-                    continue;
-                }
-
-                // Assign the target module type before generating URLs so built-in
-                // manifest entries never depend on keyword inference.
                 modelConfig.moduleType = moduleType;
+                modelConfig.registrationSource = definitionSource;
+                modelConfig.hasModelDefinition = true;
+                modelConfig.hasDistributionRecord =
+                    !string.IsNullOrWhiteSpace(modelConfig.downloadUrl)
+                    || !string.IsNullOrWhiteSpace(modelConfig.downloadFileHash);
 
-                if (string.IsNullOrEmpty(modelConfig.downloadUrl))
-                {
-                    modelConfig.downloadUrl = GetModelDownloadUrl(modelConfig.modelId, moduleType);
-                }
-
-                // Prevent duplicates only within the same module type.
-                // This allows the same modelId (e.g., Whisper) to exist under
-                // both SpeechRecognition and SpokenLanguageIdentification.
-                bool exists = manifest.models.Exists(m =>
-                    string.Equals(m.modelId, modelConfig.modelId, StringComparison.OrdinalIgnoreCase)
-                    && m.moduleType == moduleType);
-
-                if (!exists)
+                var existing = FindManifestEntry(manifest, modelConfig.modelId, moduleType);
+                if (existing == null)
                 {
                     manifest.models.Add(modelConfig);
+                    continue;
                 }
+
+                // An explicit definition already present in the manifest wins here.
+                // User-authorized local overrides are applied later by the registry.
+                if (existing.hasModelDefinition)
+                {
+                    throw new InvalidDataException(
+                        $"Duplicate Model Definition '{modelConfig.modelId}' for module '{moduleType}'. "
+                        + "A definition source must contain at most one normalized model ID per module.");
+                }
+
+                if (!existing.hasModelDefinition)
+                {
+                    var preservedUrl = existing.downloadUrl;
+                    var preservedHash = existing.downloadFileHash;
+                    var preservedDistribution = existing.hasDistributionRecord;
+                    int index = manifest.models.IndexOf(existing);
+                    manifest.models[index] = modelConfig;
+                    modelConfig.downloadUrl = preservedUrl;
+                    modelConfig.downloadFileHash = preservedHash;
+                    modelConfig.hasDistributionRecord |= preservedDistribution;
+                }
+            }
+
+            foreach (var distribution in distributionRecords ?? Array.Empty<SherpaONNXModelMetadata>())
+            {
+                if (distribution == null || !IsUnitySupportedModelId(distribution.modelId))
+                {
+                    continue;
+                }
+
+                var existing = FindManifestEntry(manifest, distribution.modelId, moduleType);
+                if (existing != null)
+                {
+                    // A local custom definition is the explicit user override layer,
+                    // including its chosen distribution location and hash policy.
+                    if (existing.registrationSource != SherpaONNXModelRegistrationSource.LocalCustom)
+                    {
+                        existing.downloadUrl = distribution.downloadUrl;
+                        existing.downloadFileHash = distribution.downloadFileHash;
+                        existing.hasDistributionRecord = true;
+                    }
+                    continue;
+                }
+
+                distribution.moduleType = moduleType;
+                distribution.registrationSource = SherpaONNXModelRegistrationSource.DistributionOnly;
+                distribution.hasModelDefinition = false;
+                distribution.hasDistributionRecord = true;
+                manifest.models.Add(distribution);
             }
         }
 
@@ -861,17 +925,17 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 return;
             }
 
-            var missingTypes = requestedTypes
-                .Where(t => !ManifestContainsModule(manifest, t))
-                .ToArray();
-
-            if (missingTypes.Length == 0)
+            // Parse package-owned definitions before starting any network work. A malformed
+            // package source is a configuration failure and must not be hidden by checksum data.
+            var definitionSources = new Dictionary<SherpaONNXModuleType, SherpaONNXModelMetadata[]>(requestedTypes.Length);
+            foreach (var moduleType in requestedTypes)
             {
-                return;
+                cancellationToken.ThrowIfCancellationRequested();
+                definitionSources[moduleType] = GetFallbackModels(moduleType);
             }
 
-            var fetchTasks = new Dictionary<SherpaONNXModuleType, Task<SherpaONNXModelMetadata[]>>(missingTypes.Length);
-            foreach (var moduleType in missingTypes)
+            var fetchTasks = new Dictionary<SherpaONNXModuleType, Task<SherpaONNXModelMetadata[]>>(requestedTypes.Length);
+            foreach (var moduleType in requestedTypes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 fetchTasks[moduleType] = FetchModelsAsync(moduleType);
@@ -879,33 +943,13 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
 
             await Task.WhenAll(fetchTasks.Values).ConfigureAwait(true);
 
-            foreach (var moduleType in missingTypes)
+            foreach (var moduleType in requestedTypes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var fetched = await fetchTasks[moduleType].ConfigureAwait(true);
-                if (fetched != null && fetched.Length > 0)
-                {
-                    AddToManifest(manifest, fetched, moduleType);
-                    continue;
-                }
-
-                var fallback = GetFallbackModels(moduleType);
-                if (fallback.Length > 0)
-                {
-                    AddToManifest(manifest, fallback, moduleType);
-                }
+                MergeModelSources(manifest, definitionSources[moduleType], fetched, moduleType);
             }
-        }
-
-        private static bool ManifestContainsModule(SherpaONNXModelManifest manifest, SherpaONNXModuleType moduleType)
-        {
-            if (manifest == null || manifest.models == null || manifest.models.Count == 0)
-            {
-                return false;
-            }
-
-            return manifest.models.Exists(m => m != null && m.moduleType == moduleType);
         }
 
         private static SherpaONNXModuleType[] NormalizeModuleTypes(IEnumerable<SherpaONNXModuleType> moduleTypes)
@@ -945,9 +989,15 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                     downloadUrl = item.downloadUrl,
                     downloadFileHash = item.downloadFileHash,
                     modelTypeHint = item.modelTypeHint,
+                    runtimeFamilyHint = item.runtimeFamilyHint,
+                    runtimeProfileId = item.runtimeProfileId,
+                    definitionProvenance = item.definitionProvenance,
                     fileBindings = CloneBindings(item.fileBindings),
                     numberOfSpeakers = item.numberOfSpeakers,
                     sampleRate = item.sampleRate,
+                    registrationSource = item.registrationSource,
+                    hasModelDefinition = item.hasModelDefinition,
+                    hasDistributionRecord = item.hasDistributionRecord,
                 });
             }
 
@@ -985,7 +1035,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
             switch (moduleType)
             {
                 case SherpaONNXModuleType.SpeechRecognition:
-                    return CloneMetadataArray(Models.ASR_MODELS_METADATA_TABLES);
+                    return GetSpeechRecognitionFallbackModels();
                 case SherpaONNXModuleType.VoiceActivityDetection:
                     return CloneMetadataArray(Models.VAD_MODELS_METADATA_TABLES);
                 case SherpaONNXModuleType.SpeechSynthesis:
@@ -1011,6 +1061,28 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 default:
                     return Array.Empty<SherpaONNXModelMetadata>();
             }
+        }
+
+        private static SherpaONNXModelMetadata[] GetSpeechRecognitionFallbackModels()
+        {
+            SherpaONNXModelDefinitionManifestSnapshot snapshot =
+                SherpaONNXRuntimeResourceProvider.GetSpeechRecognitionModelDefinitionsSnapshot();
+            if (snapshot == null || !snapshot.IsAvailable)
+            {
+                throw new InvalidDataException(
+                    $"Required package Model Definition resource '{SpeechRecognitionModelDefinitionManifestLoader.ResourcePath}' is missing.");
+            }
+
+            SherpaONNXModelDefinitionSourceResult packageDefinitions =
+                SpeechRecognitionModelDefinitionManifestLoader.Parse(
+                    snapshot.GetContentCopy(),
+                    snapshot.SourceId);
+            SherpaONNXModelMetadata[] legacyDefinitions =
+                CloneMetadataArray(Models.ASR_MODELS_METADATA_TABLES);
+
+            return packageDefinitions.Definitions
+                .Concat(legacyDefinitions)
+                .ToArray();
         }
 
         private static async Task<SherpaONNXModelMetadata[]> FetchModelsAsync(SherpaONNXModuleType moduleType)
@@ -1148,7 +1220,11 @@ namespace Eitan.SherpaONNXUnity.Runtime.Constants
                 {
                     modelId = modelId,
                     downloadFileHash = hash,
-                    downloadUrl = downloadUrl
+                    downloadUrl = downloadUrl,
+                    moduleType = moduleType,
+                    registrationSource = SherpaONNXModelRegistrationSource.DistributionOnly,
+                    hasModelDefinition = false,
+                    hasDistributionRecord = true
                 };
 
                 list.Add(meta);

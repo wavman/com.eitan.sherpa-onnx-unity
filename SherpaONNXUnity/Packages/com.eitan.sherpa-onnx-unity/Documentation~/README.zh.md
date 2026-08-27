@@ -47,6 +47,9 @@ Scope: com.eitan.sherpa-onnx-unity
 
 - 组件：`RealtimeSpeechRecognizerComponent`、`OfflineSpeechRecognizerComponent`
 - API：`SpeechRecognition.TranscribeAsync(...)`、`SpeechRecognition.SpeechTranscriptionAsync(...)`
+- Offline 组件接口：`TranscribeSamplesAsync(...)`、`WarmUpAsync(...)`、`CancelAndDrainAsync(...)`、`DisposeModuleAsync()`
+- Offline 诊断：`ModelLoadDuration`、`WarmUpDuration`、`ActiveTranscriptionCount`、`PendingSegmentCount`、`DroppedSegmentCount`、`BusySegmentCount`
+- 成功的 offline `TranscriptionResult` 通过 `Timings` 提供托管层分阶段计时，包括 semaphore wait、worker dispatch、stream 创建、`AcceptWaveform`、offline `Decode` 调用、结果物化、后处理、释放以及 worker/module total。`OfflineDecodeCall` 是 C API 调用跨度，不是 GPU kernel 时间；未完成该路径的结果保持 `IsAvailable == false`。
 - 示例：`RealtimeSpeechRecognition`、`OfflineSpeechRecognition`
 
 ### <a id="speech-synthesis"></a>语音合成
@@ -175,7 +178,23 @@ SherpaONNXUnityAPI.RegisterCustomModel(metadata);
 SherpaONNXUnityAPI.RegisterCustomModels(models);
 ```
 
-最小清单条目：
+语音识别调用方应通过与运行时相同的 SSOT 解析模型语义：
+
+```csharp
+SherpaONNXSpeechRecognitionModelSpec spec =
+    await SherpaONNXUnityAPI.ResolveSpeechRecognitionModelAsync(modelId, cancellationToken);
+```
+
+只有正式 Model Definition 且拓扑受支持时，`spec.CanInitialize` 才为 true。官方 checksum 只提供下载 URL/SHA；仅有 checksum 的 `DistributionOnly` 条目不能初始化 native recognizer。本地 custom settings 是用户显式授权的覆盖层。
+
+Package 自有的语音识别定义位于版本化 Resource：
+`Runtime/Resources/SherpaONNX/ModelDefinitions/asr-model-definitions.v1.json`。JSON 只保存 checkpoint 事实；命名的 C# Runtime Profile 唯一拥有 online/offline、native model type、runtime family、decoder policy 以及必需文件/目录角色。消费工程应调用 `ResolveSpeechRecognitionModelAsync`，不应自行解析 package manifest。
+
+Manifest-backed spec 提供 `RuntimeProfileId`、`DefinitionProvenance` 和 `RequiredFiles`。其中 provenance 标识来源、manifest kind、schema version 与原始字节 SHA-256；`RequiredFiles` 同时表达语义角色和 File/Directory 类型。
+
+`SherpaONNXUnityAPI.IsOnlineModel` 仅作为已弃用的名称启发式兼容入口保留，不读取 registry，不得用于 eligibility 或 runtime 配置。
+
+最小的 **legacy custom model manifest** 条目（不是上述 package Model Definition schema）：
 
 ```json
 {
@@ -185,11 +204,14 @@ SherpaONNXUnityAPI.RegisterCustomModels(models);
   "downloadUrl": "https://your.cdn/path/to/model.zip",
   "downloadFileHash": "sha256-hex",
   "modelTypeHint": "",
+  "runtimeFamilyHint": "",
   "fileBindings": [],
   "numberOfSpeakers": 0,
   "sampleRate": 16000
 }
 ```
+
+Legacy custom 条目可以显式提供 `modelTypeHint`、`runtimeFamilyHint` 与 `fileBindings`。它是兼容及用户覆盖路径；package 自有 checkpoint 事实应进入版本化 Model Definition manifest，并由命名 Runtime Profile 提供运行语义。
 
 ## 平台说明
 

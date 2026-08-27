@@ -260,6 +260,20 @@ namespace Eitan.SherpaONNXUnity.Runtime.Utilities
             return ResolveRequiredFile(metadata, description, onFallback, BuildCriteriaWithBindings(bindingKeys, criteria));
         }
 
+        public static string ResolveRequiredDirectoryWithBindings(
+            SherpaONNXModelMetadata metadata,
+            string description,
+            Action<string> onFallback,
+            SherpaONNXModelFileKey[] bindingKeys,
+            params ModelFileCriteria[] criteria)
+        {
+            return ResolveRequiredFile(
+                metadata,
+                description,
+                onFallback,
+                BuildCriteriaWithBindings(true, bindingKeys, criteria));
+        }
+
         public static string ResolveOptionalFile(
             SherpaONNXModelMetadata metadata,
             Action<string> onFallback = null,
@@ -344,6 +358,14 @@ namespace Eitan.SherpaONNXUnity.Runtime.Utilities
             SherpaONNXModelFileKey[] bindingKeys,
             params ModelFileCriteria[] criteria)
         {
+            return BuildCriteriaWithBindings(false, bindingKeys, criteria);
+        }
+
+        private static ModelFileCriteria[] BuildCriteriaWithBindings(
+            bool expectDirectory,
+            SherpaONNXModelFileKey[] bindingKeys,
+            params ModelFileCriteria[] criteria)
+        {
             var sanitizedCriteria = (criteria ?? Array.Empty<ModelFileCriteria>())
                 .ToArray();
             var sanitizedKeys = (bindingKeys ?? Array.Empty<SherpaONNXModelFileKey>())
@@ -357,7 +379,7 @@ namespace Eitan.SherpaONNXUnity.Runtime.Utilities
             }
 
             var combined = new ModelFileCriteria[sanitizedCriteria.Length + 1];
-            combined[0] = ModelFileCriteria.FromBindingKeys(sanitizedKeys);
+            combined[0] = ModelFileCriteria.FromBindingKeys(expectDirectory, null, null, sanitizedKeys);
             if (sanitizedCriteria.Length > 0)
             {
                 Array.Copy(sanitizedCriteria, 0, combined, 1, sanitizedCriteria.Length);

@@ -4,7 +4,8 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Eitan.SherpaONNXUnity"
+        "Eitan.SherpaONNXUnity",
+        "Eitan.SherpaONNXUnity.Runtime.Native"
     ],
     "includePlatforms": [
         "Editor"
