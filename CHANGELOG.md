@@ -5,6 +5,19 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http.keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.1.4-exp.12] - 2026-08-29
+
+### Fixed
+- `DisposalTask` and `DisposeAsync()` now complete only after a destruction callback posted to the captured Unity synchronization context has run and returned.
+- The fork's embedded offline-recognition demo now uses resolved model specs instead of the obsolete name-only online/offline heuristic, keeping the package test project compilable.
+
+### Tests
+- Added an EditMode lifecycle regression that holds a posted destruction callback and verifies disposal cannot report completion early.
+- Added coverage for the no-captured-context fallback and exception containment during destruction without loading native models.
+
+### Notes
+- No native DLL, native ABI, provider policy, model payload, or model download behavior changed.
+
 ## [0.1.4-exp.11] - 2026-08-27
 
 ### Changed
