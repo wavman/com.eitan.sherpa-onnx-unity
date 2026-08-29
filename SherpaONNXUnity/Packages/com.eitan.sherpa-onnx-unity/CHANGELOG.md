@@ -5,6 +5,18 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http.keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.1.4-exp.13] - 2026-08-29
+
+### Fixed
+- Streaming transcript deduplication now preserves the semantic Partial-to-Final transition even when both results contain identical text.
+- Final publication resets per-utterance deduplication state so a following utterance can publish the same text again.
+
+### Tests
+- Added native-free policy coverage for repeated Partial suppression, identical-text Final publication, next-utterance reset, and disabled deduplication.
+
+### Notes
+- Endpoint rules, native decoding, provider policy, native DLLs, native ABI, and model payloads are unchanged.
+
 ## [0.1.4-exp.12] - 2026-08-29
 
 ### Fixed

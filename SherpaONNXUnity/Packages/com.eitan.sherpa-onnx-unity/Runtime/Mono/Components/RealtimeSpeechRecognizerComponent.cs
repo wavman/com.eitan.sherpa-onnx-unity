@@ -140,7 +140,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
         private CancellationTokenSource streamingCancellation;
         private bool drainingQueue;
-        private string lastTranscript = string.Empty;
+        private readonly StreamingTranscriptPublicationPolicy publicationPolicy = new StreamingTranscriptPublicationPolicy();
         private int droppedChunks;
         private int totalDroppedChunks;
         private float lastDropLog;
@@ -358,12 +358,11 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
         private void PublishTranscript(SpeechRecognition.TranscriptionResult result)
         {
-            if (deduplicateStreamingResults && string.Equals(result.Text, lastTranscript, StringComparison.Ordinal))
+            if (!publicationPolicy.ShouldPublish(result, deduplicateStreamingResults))
             {
                 return;
             }
 
-            lastTranscript = result.Text;
             onTranscriptionReady?.Invoke(result);
         }
 
@@ -382,7 +381,7 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
             MaybeLogDroppedChunks();
 
-            lastTranscript = string.Empty;
+            publicationPolicy.Reset();
         }
 
         private void MaybeLogDroppedChunks()
@@ -445,6 +444,36 @@ namespace Eitan.Sherpa.Onnx.Unity.Mono.Components
 
             public float[] Samples { get; }
             public int SampleRate { get; }
+        }
+    }
+
+    internal sealed class StreamingTranscriptPublicationPolicy
+    {
+        private string lastPartialTranscript = string.Empty;
+
+        public bool ShouldPublish(
+            SpeechRecognition.TranscriptionResult result,
+            bool deduplicate)
+        {
+            if (result.IsFinal)
+            {
+                lastPartialTranscript = string.Empty;
+                return true;
+            }
+
+            if (deduplicate
+                && string.Equals(result.Text, lastPartialTranscript, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            lastPartialTranscript = result.Text ?? string.Empty;
+            return true;
+        }
+
+        public void Reset()
+        {
+            lastPartialTranscript = string.Empty;
         }
     }
 }
