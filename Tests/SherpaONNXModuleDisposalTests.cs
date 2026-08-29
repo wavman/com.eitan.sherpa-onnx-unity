@@ -12,10 +12,10 @@ namespace Eitan.SherpaONNXUnity.Tests
 {
     public sealed class SherpaONNXModuleDisposalTests
     {
-        private const int TestTimeoutMilliseconds = 5000;
+        private const int TEST_TIMEOUT_MILLISECONDS = 5000;
 
         [UnityTest]
-        [Timeout(TestTimeoutMilliseconds)]
+        [Timeout(TEST_TIMEOUT_MILLISECONDS)]
         public IEnumerator DisposalTask_DoesNotCompleteBeforePostedDestroyCallbackReturns()
         {
             var previousContext = SynchronizationContext.Current;
@@ -60,7 +60,7 @@ namespace Eitan.SherpaONNXUnity.Tests
         }
 
         [UnityTest]
-        [Timeout(TestTimeoutMilliseconds)]
+        [Timeout(TEST_TIMEOUT_MILLISECONDS)]
         public IEnumerator RepeatedDisposal_WithoutCapturedContext_CompletesAfterDestroyRunsOnce()
         {
             var previousContext = SynchronizationContext.Current;
@@ -91,7 +91,7 @@ namespace Eitan.SherpaONNXUnity.Tests
         }
 
         [UnityTest]
-        [Timeout(TestTimeoutMilliseconds)]
+        [Timeout(TEST_TIMEOUT_MILLISECONDS)]
         public IEnumerator DisposalTask_WhenDestroyThrows_CompletesAfterPostedCallbackReturns()
         {
             var previousContext = SynchronizationContext.Current;
