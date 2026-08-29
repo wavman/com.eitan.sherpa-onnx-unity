@@ -661,7 +661,7 @@ namespace Eitan.SherpaONNXUnity.Runtime
                         await runner.WaitForAllAsync(CancellationToken.None).ConfigureAwait(false);
                     }
 
-                    InvokeOnDestroySafe();
+                    await InvokeOnDestroySafeAsync().ConfigureAwait(false);
                     if (disposing)
                     {
                         try { runner?.Dispose(); } catch { }
@@ -912,19 +912,30 @@ namespace Eitan.SherpaONNXUnity.Runtime
             }
         }
 
-        private void InvokeOnDestroySafe()
+        private Task InvokeOnDestroySafeAsync()
         {
             if (Interlocked.Exchange(ref _onDestroyInvoked, 1) != 0)
             {
-                return;
+                return Task.CompletedTask;
             }
 
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             try
             {
                 if (_rootThreadContext != null)
                 {
-                    _rootThreadContext.Post(_ => SafeOnDestroy(), null);
-                    return;
+                    _rootThreadContext.Post(_ =>
+                    {
+                        try
+                        {
+                            SafeOnDestroy();
+                        }
+                        finally
+                        {
+                            completion.TrySetResult(true);
+                        }
+                    }, null);
+                    return completion.Task;
                 }
             }
             catch
@@ -932,7 +943,15 @@ namespace Eitan.SherpaONNXUnity.Runtime
                 // fall through
             }
 
-            SafeOnDestroy();
+            try
+            {
+                SafeOnDestroy();
+            }
+            finally
+            {
+                completion.TrySetResult(true);
+            }
+            return completion.Task;
         }
 
         private void SafeOnDestroy()
