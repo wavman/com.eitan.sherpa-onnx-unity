@@ -12,8 +12,10 @@ namespace Eitan.SherpaONNXUnity.Tests
 {
     public sealed class SherpaONNXModuleDisposalTests
     {
+        private const int TestTimeoutMilliseconds = 5000;
+
         [UnityTest]
-        [Timeout(5000)]
+        [Timeout(TestTimeoutMilliseconds)]
         public IEnumerator DisposalTask_DoesNotCompleteBeforePostedDestroyCallbackReturns()
         {
             var previousContext = SynchronizationContext.Current;
@@ -32,18 +34,23 @@ namespace Eitan.SherpaONNXUnity.Tests
 
             try
             {
-                module.Dispose();
+                Task disposeAsyncTask = module.DisposeAsync();
                 yield return new WaitUntil(() => queuedContext.HasPendingCallback);
                 yield return null;
 
-                bool completedBeforeDestroy = module.DisposalTask.IsCompleted;
+                bool disposalTaskCompletedBeforeDestroy = module.DisposalTask.IsCompleted;
+                bool disposeAsyncCompletedBeforeDestroy = disposeAsyncTask.IsCompleted;
 
                 queuedContext.ExecuteNext();
-                yield return new WaitUntil(() => module.DisposalTask.IsCompleted);
+                yield return new WaitUntil(() => module.DisposalTask.IsCompleted && disposeAsyncTask.IsCompleted);
 
-                Assert.That(completedBeforeDestroy, Is.False,
+                Assert.That(disposalTaskCompletedBeforeDestroy, Is.False,
                     "DisposalTask completed while the posted OnDestroy callback was still queued.");
+                Assert.That(disposeAsyncCompletedBeforeDestroy, Is.False,
+                    "DisposeAsync completed while the posted OnDestroy callback was still queued.");
                 Assert.That(module.DestroyCount, Is.EqualTo(1));
+                Assert.That(queuedContext.HasPendingCallback, Is.False,
+                    "The module left a destruction callback queued after DisposeAsync completed.");
             }
             finally
             {
@@ -53,8 +60,8 @@ namespace Eitan.SherpaONNXUnity.Tests
         }
 
         [UnityTest]
-        [Timeout(5000)]
-        public IEnumerator DisposalTask_WithoutCapturedContext_CompletesAfterDestroyReturns()
+        [Timeout(TestTimeoutMilliseconds)]
+        public IEnumerator RepeatedDisposal_WithoutCapturedContext_CompletesAfterDestroyRunsOnce()
         {
             var previousContext = SynchronizationContext.Current;
             ProbeModule module;
@@ -69,15 +76,22 @@ namespace Eitan.SherpaONNXUnity.Tests
                 SynchronizationContext.SetSynchronizationContext(previousContext);
             }
 
+            Task firstDisposeAsyncTask = module.DisposeAsync();
             module.Dispose();
-            yield return new WaitUntil(() => module.DisposalTask.IsCompleted);
+            Task secondDisposeAsyncTask = module.DisposeAsync();
+            yield return new WaitUntil(() =>
+                module.DisposalTask.IsCompleted &&
+                firstDisposeAsyncTask.IsCompleted &&
+                secondDisposeAsyncTask.IsCompleted);
 
             Assert.That(module.DestroyCount, Is.EqualTo(1));
             Assert.That(module.DisposalTask.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(firstDisposeAsyncTask.Status, Is.EqualTo(TaskStatus.RanToCompletion));
+            Assert.That(secondDisposeAsyncTask.Status, Is.EqualTo(TaskStatus.RanToCompletion));
         }
 
         [UnityTest]
-        [Timeout(5000)]
+        [Timeout(TestTimeoutMilliseconds)]
         public IEnumerator DisposalTask_WhenDestroyThrows_CompletesAfterPostedCallbackReturns()
         {
             var previousContext = SynchronizationContext.Current;
